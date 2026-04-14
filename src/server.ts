@@ -38,6 +38,12 @@ app.options('*', corsPreflightHandler)
 // Also add CORS headers to all responses
 app.use('*', corsMiddleware)
 
+// Log every incoming request
+app.use('*', async (c, next) => {
+  console.log(`→ ${c.req.method} ${c.req.path}`)
+  await next()
+})
+
 const indexHtmlPath = join(process.cwd(), 'public', 'index.html')
 let cachedIndexHtml: string | null = null
 
