@@ -106,4 +106,26 @@ describe('createHttpAnthropicClient', () => {
     const client = createHttpAnthropicClient()
     await expect(client.fetchModels()).rejects.toThrow(/500/)
   })
+
+  it('fetchModels honors CURSOR_CLAUDE_MODELS_URL override (test seam)', async () => {
+    let seenUrl = ''
+    globalThis.fetch = vi.fn(async (url: any) => {
+      seenUrl = String(url)
+      return new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+
+    const saved = process.env.CURSOR_CLAUDE_MODELS_URL
+    process.env.CURSOR_CLAUDE_MODELS_URL = 'http://127.0.0.1:31415/models.json'
+    try {
+      const client = createHttpAnthropicClient()
+      await client.fetchModels()
+    } finally {
+      if (saved === undefined) delete process.env.CURSOR_CLAUDE_MODELS_URL
+      else process.env.CURSOR_CLAUDE_MODELS_URL = saved
+    }
+    expect(seenUrl).toBe('http://127.0.0.1:31415/models.json')
+  })
 })

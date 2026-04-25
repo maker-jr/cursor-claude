@@ -10,7 +10,14 @@ import type {
 } from '../../ports/anthropic-client'
 
 const MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
-const MODELS_URL = 'https://models.dev/api.json'
+const DEFAULT_MODELS_URL = 'https://models.dev/api.json'
+
+// Test/dev seam: lets the CLI tests point the adapter at a local fixture
+// server instead of hitting models.dev. Production users never set this.
+function modelsUrl(): string {
+  const override = process.env.CURSOR_CLAUDE_MODELS_URL
+  return override && override.length > 0 ? override : DEFAULT_MODELS_URL
+}
 
 function collectHeaders(res: Response): Record<string, string> {
   const out: Record<string, string> = {}
@@ -73,7 +80,7 @@ export function createHttpAnthropicClient(): AnthropicClient {
     },
 
     async fetchModels(): Promise<unknown> {
-      const res = await fetch(MODELS_URL, {
+      const res = await fetch(modelsUrl(), {
         method: 'GET',
         headers: {
           accept: 'application/json',

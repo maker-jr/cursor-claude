@@ -275,6 +275,13 @@ function printBanner(
   console.log()
   console.log('  Storage:     ' + pc.dim(storeKind))
   console.log()
+  console.log(
+    '  ' +
+      pc.dim('Tip: run ') +
+      pc.bold('cursor-claude models') +
+      pc.dim(' to list Claude model IDs you can plug into Cursor.'),
+  )
+  console.log()
 
   if (!publicUrl) {
     console.log(

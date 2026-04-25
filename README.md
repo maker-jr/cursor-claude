@@ -67,11 +67,34 @@ cursor-claude start              Start the local proxy.
   -k, --api-key <key>            API key clients must send; persisted for future starts.
                                  If omitted, an existing key is reused, or a new one is generated.
 
+cursor-claude models             List Claude model IDs available through your subscription.
+  --json                         Output the OpenAI-shaped models payload as JSON.
+  --ids-only                     Output one model id per line; ideal for shell pipes.
+
 cursor-claude status             Show auth state, API key, and running server info.
 cursor-claude logout             Remove stored OAuth credentials.
 cursor-claude --version
 cursor-claude --help
 ```
+
+## Available models
+
+To see the Claude models you can use, run:
+
+```bash
+cursor-claude models
+```
+
+This prints a table of every Claude model exposed by Anthropic (sourced from [models.dev](https://models.dev)), with the model ID, display name, and release date. Copy any ID into Cursor under **Settings → Models → Add model**.
+
+For scripting:
+
+```bash
+cursor-claude models --ids-only           # one id per line
+cursor-claude models --json | jq '.data[].id'
+```
+
+The same data is served at `GET /v1/models` on the running proxy, so any OpenAI-compatible client that requests `/v1/models` (Cursor included) can discover them automatically too.
 
 ## API key behavior
 

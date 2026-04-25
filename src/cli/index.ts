@@ -2,6 +2,7 @@ import { config as loadDotenv } from 'dotenv'
 import { Command } from 'commander'
 import { buildDeps } from './composition'
 import { runLogin } from './commands/login'
+import { runModels } from './commands/models'
 import { runStart } from './commands/start'
 import { runStatus } from './commands/status'
 import { runLogout } from './commands/logout'
@@ -85,6 +86,17 @@ program
       })
     },
   )
+
+program
+  .command('models')
+  .description(
+    'list Anthropic models available through your subscription (no proxy needed)',
+  )
+  .option('--json', 'output the OpenAI-shaped models list as JSON')
+  .option('--ids-only', 'output one model id per line; ideal for shell pipes')
+  .action(async (opts: { json?: boolean; idsOnly?: boolean }) => {
+    await runModels(buildDeps(), { json: !!opts.json, idsOnly: !!opts.idsOnly })
+  })
 
 program
   .command('status')
