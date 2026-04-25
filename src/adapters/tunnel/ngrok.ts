@@ -38,22 +38,22 @@ export async function startNgrokTunnel(
     )
   }
 
+  // ngrok 3.x does NOT accept --web-addr as a CLI flag (it's config-file or
+  // env-var only). We default to 4040 (ngrok's own default); if it's busy we
+  // pick an alternative and pass it via NGROK_WEB_ADDR.
   const apiPort = (await isPortFree(4040))
     ? 4040
     : (await findFreePort(4041, 20)) ?? 4041
 
-  const child = spawn(
-    'ngrok',
-    [
-      'http',
-      String(localPort),
-      '--log=stdout',
-      '--log-format=json',
-      '--log-level=info',
-      `--web-addr=127.0.0.1:${apiPort}`,
-    ],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
-  )
+  const env =
+    apiPort === 4040
+      ? process.env
+      : { ...process.env, NGROK_WEB_ADDR: `127.0.0.1:${apiPort}` }
+
+  const child = spawn('ngrok', ['http', String(localPort), '--log=stderr'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env,
+  })
 
   let earlyExitErr: string | null = null
   child.on('exit', (code, signal) => {
