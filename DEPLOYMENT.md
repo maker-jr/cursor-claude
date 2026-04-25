@@ -1,20 +1,33 @@
-# 🚀 Deployment Guide - Cursor Claude Connector
+# Deployment Guide
 
-This guide will help you connect Cursor with your Claude subscription using this proxy.
+This guide covers the three supported ways to run the proxy: the local CLI, a self-hosted server, and Vercel.
 
-## 📋 Prerequisites
+## Prerequisites
 
 1. **Active Claude subscription** (Pro or Max)
 2. **Cursor IDE** installed on your local machine
-3. **GitHub account** (for Vercel deployment)
+3. **GitHub account** (only for the Vercel option)
 
-## 🚀 Deployment Options
+## Deployment Options
+
+### Option 0: Local CLI (recommended for personal use)
+
+If you just want Claude in your own Cursor, use the CLI. No server, no Redis.
+
+```bash
+npx cursor-claude login
+npx cursor-claude start
+```
+
+Then set Cursor's OpenAI base URL to `http://localhost:9095/v1`. See the [README](README.md) for all commands.
+
+For remote/shared access, use one of the options below.
 
 ### Option 1: Deploy to Vercel (Recommended) ⚡
 
 The easiest way to get started is with our one-click Vercel deployment:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Maol-1997/cursor-claude-connector&integration-ids=oac_V3R1GIpkoJorr6fqyiwdhl17)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/maker-jr/cursor-claude&integration-ids=oac_V3R1GIpkoJorr6fqyiwdhl17)
 
 #### What happens when you click:
 
@@ -45,8 +58,8 @@ source ~/.bashrc
 
 ```bash
 # Clone the repository
-git clone https://github.com/Maol-1997/cursor-claude-connector.git
-cd cursor-claude-connector
+git clone https://github.com/maker-jr/cursor-claude.git
+cd cursor-claude
 
 # Set up environment variables
 cp env.example .env

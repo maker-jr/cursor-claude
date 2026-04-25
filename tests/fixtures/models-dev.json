@@ -1,0 +1,28 @@
+{
+  "anthropic": {
+    "id": "anthropic",
+    "name": "Anthropic",
+    "models": {
+      "claude-opus-4-20250514": {
+        "id": "claude-opus-4-20250514",
+        "name": "Claude Opus 4",
+        "release_date": "2025-05-14"
+      },
+      "claude-sonnet-4-20250514": {
+        "id": "claude-sonnet-4-20250514",
+        "name": "Claude Sonnet 4",
+        "release_date": "2025-05-14"
+      },
+      "claude-haiku-3-5-20241022": {
+        "id": "claude-haiku-3-5-20241022",
+        "name": "Claude Haiku 3.5",
+        "release_date": "2024-10-22"
+      }
+    }
+  },
+  "openai": {
+    "id": "openai",
+    "name": "OpenAI",
+    "models": {}
+  }
+}

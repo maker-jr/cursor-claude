@@ -48,3 +48,13 @@ coverage/
 # Temporary files
 tmp/
 temp/
+
+# Internal planning artifacts (kept locally, not published)
+docs/superpowers/
+
+# npm tarball produced by `npm pack`
+*.tgz
+
+# Stale bun lockfile (project uses npm)
+bun.lock
+

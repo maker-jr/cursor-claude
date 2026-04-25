@@ -1,41 +1,78 @@
 {
-  "name": "cursor-claude-connector",
+  "name": "cursor-claude",
   "version": "1.0.0",
-  "description": "Connector proxy to use Cursor code editor with Claude (Pro/Max) subscription as API key for tokens",
+  "description": "CLI proxy to use Cursor (and other OpenAI-compatible IDEs) with your Claude Pro/Max subscription",
   "main": "dist/server.js",
+  "bin": {
+    "cursor-claude": "./bin/cursor-claude.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/server.ts",
-    "start": "node dist/server.js",
-    "start:dev": "tsx watch src/server.ts",
-    "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "vercel-build": "npm run build"
+    "typecheck": "tsc --noEmit",
+    "cli": "tsx src/cli/index.ts",
+    "cli:dev": "tsx watch src/cli/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "vercel-build": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "keywords": [
     "cursor",
     "claude",
     "anthropic",
     "openai",
+    "openai-compatible",
     "proxy",
-    "api",
-    "connector",
-    "code-editor",
+    "byok",
     "claude-pro",
     "claude-max",
-    "oauth"
+    "oauth",
+    "cli",
+    "ngrok",
+    "tunnel"
   ],
-  "author": "Maol-1997",
+  "author": {
+    "name": "Umar Yabo",
+    "email": "maker.jr6@gmail.com"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maker-jr/cursor-claude.git"
+  },
+  "bugs": {
+    "url": "https://github.com/maker-jr/cursor-claude/issues"
+  },
+  "homepage": "https://github.com/maker-jr/cursor-claude#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
+    "@hono/node-server": "^1.19.13",
     "@upstash/redis": "^1.35.1",
-    "hono": "^4.8.3"
+    "commander": "^12.1.0",
+    "dotenv": "^17.4.1",
+    "hono": "^4.8.3",
+    "ioredis": "^5.10.1",
+    "open": "^10.1.0",
+    "picocolors": "^1.1.1"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.18",
     "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "execa": "^9.6.1",
     "tsx": "^4.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.4"
   },
   "engines": {
     "node": ">=18.0.0"

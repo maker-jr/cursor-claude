@@ -1,154 +1,148 @@
-# 🚀 Cursor-Claude Connector
+# cursor-claude
 
-> **Maximize your Claude subscription**: Use Claude's full power in your favorite IDE (like Cursor)
+> Use your Claude Pro/Max subscription from Cursor (or any OpenAI-compatible IDE) via a small local proxy.
 
-## 🚀 Why use your Claude subscription in an IDE?
+`cursor-claude` is a CLI that runs a local OpenAI-compatible proxy in front of Anthropic's API, authenticated with your own Claude subscription via OAuth. Point your IDE at the proxy and you're done.
 
-Get the best of both worlds by combining Claude's capabilities with a professional development environment:
+## Why
 
-### 💡 **Claude's Full Capabilities**
+- **Use Claude's latest models in your IDE** without paying for API usage on top of your subscription.
+- **No per-token costs** — you're already paying for Claude Max.
+- **Full context, streaming, tool use** — the proxy preserves Anthropic's semantics while speaking OpenAI's wire format.
 
-- Direct access to Claude's latest models and features
-- No token limits from your Claude Max subscription
-- Full context understanding without compression
-- Handle large files and complex projects seamlessly
+## Quick start
 
-### 🛠️ **Professional IDE Experience**
+```bash
+# 1. Authenticate once
+npx cursor-claude login
 
-- **Code-first interface**: Built specifically for development workflows
-- **File management**: Navigate and edit multiple files effortlessly
-- **Version control**: Full git integration and change tracking
-- **Extensions & tools**: Access to your IDE's ecosystem
+# 2. Start the proxy
+#    For Cursor (needs a public HTTPS URL):
+npx cursor-claude start --tunnel
+#
+#    For any other OpenAI-compatible client on the same machine:
+npx cursor-claude start
+```
 
-### 💰 **Maximize Your Investment**
+The banner prints your OpenAI Base URL and API key — copy/paste them into your IDE and you're done.
 
-- Already paying for Claude Max? Use it everywhere
-- No additional API costs or usage limits
-- One subscription, multiple environments
-- Full value from your Claude subscription
+## Important: Cursor requires a public HTTPS URL
 
-### 🎯 **Perfect for Complex Projects**
+Cursor's agent/chat features run inference through Cursor's backend, which then calls your override URL. That means `http://localhost:...` **will not work** for Cursor — the calls originate from Cursor's infrastructure, not your machine.
 
-- Maintain context across entire codebases
-- Work with large files without restrictions
-- Extended coding sessions without interruptions
-- Professional development workflow
+Three ways around this:
 
-## ⚠️ **Important: Cursor Requirements**
+1. **`--tunnel`** (easiest). `cursor-claude start --tunnel` boots the proxy and starts an ngrok HTTPS tunnel to it. Requires the [ngrok CLI](https://ngrok.com/download) (`brew install ngrok/ngrok/ngrok`) and an authtoken (`ngrok config add-authtoken <token>` — free tier works).
+2. **Bring your own tunnel**. If you already have ngrok, Cloudflare Tunnel, Tailscale Funnel, etc. running on some port, just:
+   - Run `cursor-claude start --port <that-port>` (no `--tunnel` flag).
+   - Configure Cursor with `<your-tunnel-url>/v1` and the API key the CLI printed.
 
-> **Note**: Cursor requires at least the $20/month plan to use agent mode with custom API keys (BYOK - Bring Your Own Key). The free tier only supports basic completions.
+   This is the right path on ngrok's free plan, which only allows one active tunnel per account — trying to start a second one will fail. The CLI detects a running ngrok agent and tells you which public URL to reuse.
+3. **Deploy remotely** via the Vercel + Upstash path. See **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
-## 🔧 How does this project work?
+Other OpenAI-compatible clients that run on the same machine (aider, Continue, Zed, curl, scripts) talk to the proxy directly and don't need a tunnel.
 
-This proxy enables you to use your Claude Max subscription directly in IDEs that support OpenAI-compatible APIs:
+## Install
 
-- ✅ Your favorite IDE's interface and features
-- ✅ Claude's full capabilities from your subscription
-- ✅ No additional costs beyond your Claude Max subscription
+Run on demand with `npx cursor-claude <command>`, or install globally:
 
-### Architecture
+```bash
+npm install -g cursor-claude
+```
+
+Requires Node.js 18+.
+
+## Commands
+
+```
+cursor-claude login              Authenticate with Claude via OAuth.
+  --force                        Re-authenticate even if a valid token exists.
+  --no-open                      Don't try to auto-open the browser.
+
+cursor-claude start              Start the local proxy.
+  -p, --port <port>              Port to listen on (default 9095).
+  --no-auto-port                 Fail instead of auto-incrementing a busy port.
+  -d, --detach                   Run in the background. Logs to ~/.config/cursor-claude/server.log.
+  -t, --tunnel                   Expose the proxy via an ngrok HTTPS tunnel (required for Cursor).
+  -k, --api-key <key>            API key clients must send; persisted for future starts.
+                                 If omitted, an existing key is reused, or a new one is generated.
+
+cursor-claude status             Show auth state, API key, and running server info.
+cursor-claude logout             Remove stored OAuth credentials.
+cursor-claude --version
+cursor-claude --help
+```
+
+## API key behavior
+
+The proxy always requires clients to send an API key. The CLI manages this for you:
+
+- **First run**: a random key (`cck_…`) is generated and saved to `~/.config/cursor-claude/config.json`. The banner prints it.
+- **Subsequent runs**: the saved key is reused automatically.
+- **`--api-key <value>`**: override and persist a new key.
+- **`API_KEY` env var**: if set, it takes precedence and is not persisted (useful for CI or shared deployments).
+- **`cursor-claude status`** shows the current key any time.
+
+## Optional environment variables
+
+All optional. Set them in the shell, an `.env` file in your cwd, or both.
+
+- `PORT` — default listening port (overridden by `--port`).
+- `API_KEY` — if set, overrides the persisted key for this run.
+- `ANTHROPIC_OAUTH_CLIENT_ID` — override the OAuth client id (defaults to the official Claude CLI id).
+- `REDIS_URL` — if set, credentials are stored in Redis instead of a local file. Useful for remote/shared deployments.
+- `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` — Upstash REST alternative to `REDIS_URL`.
+- `XDG_CONFIG_HOME` — if set, config and credentials live under `$XDG_CONFIG_HOME/cursor-claude/` instead of the default OS config path.
+
+`dotenv` loads a `.env` from your **current working directory** only (not from your home folder). A stray `REDIS_URL` there switches the credential store for every command run in that directory — see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+Copy [env.example](env.example) to `.env` and adjust as needed.
+
+## Remote/shared deployment (Vercel + Upstash)
+
+For a stable public URL without running your own tunnel, the project supports a one-click Vercel deploy with an automatically provisioned Upstash Redis database. See **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 ```mermaid
 graph LR
-    A[Your IDE] -->|Requests| B[Proxy Server]
-    B -->|Authenticated| C[Claude Fixed Subscription]
+    A[Your IDE] -->|Requests| B[cursor-claude proxy]
+    B -->|OAuth-authenticated| C[Anthropic API]
     C -->|Response| B
-    B -->|Full Context| A
+    B -->|OpenAI format| A
 ```
 
-## 🚀 Quick Installation
+## Architecture
 
-### 🔥 One-Click Deploy to Vercel
+The codebase uses a small hexagonal layout: pure **domain** logic, **port** interfaces, **adapter** implementations, a thin **HTTP** layer (Hono), and the **CLI**. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-Deploy instantly with Upstash Redis integration:
+## How it works
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Maol-1997/cursor-claude-connector&env=API_KEY&envDescription=Custom%20optional%20key%20for%20enhanced%20security%20protection&envLink=https://github.com/Maol-1997/cursor-claude-connector%23api-key&integration-ids=oac_V3R1GIpkoJorr6fqyiwdhl17)
+1. `login` runs the Anthropic OAuth PKCE flow in the browser and exchanges the returned code for access + refresh tokens.
+2. Tokens are persisted locally (file by default) and refreshed automatically on expiry.
+3. `start` brings up a Hono HTTP server that exposes `/v1/models`, `/v1/chat/completions`, and `/v1/messages`.
+4. Incoming OpenAI-style requests are rewritten to Anthropic's Messages API; responses are streamed back in whichever format the caller asked for.
+5. With `--tunnel`, an ngrok subprocess exposes the local port as an HTTPS URL for Cursor to reach.
 
-<!-- The integration-ids parameter includes Upstash's official Vercel integration ID for automatic Redis setup -->
+## Security
 
-This will:
+- OAuth credentials and the persisted API key live in `~/.config/cursor-claude/` with mode `0600`.
+- The proxy binds to `localhost` by default. `--tunnel` exposes it on the public internet for the duration of the command; the required API key protects it.
+- No telemetry. Source is MIT-licensed.
 
-- ✅ Deploy the proxy to Vercel
-- ✅ Automatically create an Upstash Redis database
-- ✅ Configure all environment variables (including optional API_KEY)
-- ✅ Get you running in under 2 minutes!
+## FAQ
 
-### 📖 Manual Setup Guide
+- **Cursor and localhost** — Cursor’s servers must reach your base URL over HTTPS; use `--tunnel` or your own public URL. See [Important: Cursor requires a public HTTPS URL](#important-cursor-requires-a-public-https-url) above.
+- **Port already in use** — Another process holds the port, or a previous detached server is still running. Try `cursor-claude status`, pick another `--port`, or allow auto-port (omit `--no-auto-port`). More: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+- **Wrong credential store (Redis vs file)** — Check for `REDIS_URL` in your shell or a `.env` in the directory you run from. [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#unexpected-redis--remote-credential-store)
+- **Publishing** — Maintainer checklist: [docs/PUBLISHING.md](docs/PUBLISHING.md). Release notes: [CHANGELOG.md](CHANGELOG.md).
 
-For detailed instructions or alternative deployment methods, see our **[Deployment Guide](DEPLOYMENT.md)**.
+## Contributing
 
-### Local Development
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, scripts, and PR expectations. Issues and PRs are welcome.
 
-1. **Clone the repository**
+## Credits
 
-   ```bash
-   git clone https://github.com/Maol-1997/cursor-claude-connector.git
-   cd cursor-claude-connector
-   ```
+Based on the earlier [Maol-1997/cursor-claude-connector](https://github.com/Maol-1997/cursor-claude-connector) project. Huge thanks to the original author for the core OAuth flow and Anthropic-to-OpenAI translation that this CLI builds on. `cursor-claude` is a separate codebase (not a GitHub fork) — significantly restructured around a CLI, hexagonal architecture, persistent API keys, an ngrok tunnel, and a full test suite — but the foundational ideas come from there.
 
-2. **Set up Upstash Redis**
+## License
 
-   - Create a free Redis database at [Upstash Console](https://console.upstash.com/)
-   - Copy your REST URL and REST Token
-   - Copy `env.example` to `.env` and update with your values:
-
-   ```bash
-   cp env.example .env
-   # Edit .env with your Upstash credentials
-   ```
-
-3. **Run the start script**
-
-   ```bash
-   ./start.sh
-   ```
-
-4. **Authenticate with Claude**
-
-   - Open `http://localhost:9095/` in your browser
-   - Follow the authentication process
-
-5. **Configure Cursor**
-   - Go to Settings → Models
-   - Enable "Override OpenAI Base URL"
-   - Enter: `http://localhost:9095/v1` (for local) or `https://your-app.vercel.app/v1` (for Vercel)
-   - If you set an API_KEY during deployment, add it to your API key field in Cursor
-
-## 🎉 Advantages of this solution
-
-| Feature                 | Claude Web | Claude Code | **This Project**        |
-| ----------------------- | ---------- | ----------- | ----------------------- |
-| IDE Integration         | ❌         | ❌ Terminal | ✅ Full IDE             |
-| File Management         | ❌         | ✅          | ✅ IDE Native           |
-| Claude Max Usage Limits | ✅         | ✅          | ✅ No Additional Limits |
-| Version Control         | ❌         | ⚠️          | ✅ Full Git Integration |
-| Development Extensions  | ❌         | ❌          | ✅ IDE Ecosystem        |
-| Cost                    | Claude Max | Claude Max  | Claude Max Only         |
-
-## 🔐 API Key (Optional)
-
-You can optionally set an `API_KEY` environment variable for additional security:
-
-- If set, Cursor must provide this key in the API key field
-- Adds an extra layer of authentication to your proxy
-- Useful when deploying to public URLs
-- Leave empty to use without additional authentication
-
-## 🛡️ Security
-
-- Uses your existing Claude session for authentication
-- Optional API key for additional security
-- Local connection between Cursor and the proxy
-- Open source code for auditing
-
-## 🤝 Contributions
-
-Contributions are welcome! If you find any issues or have suggestions, please open an issue or PR.
-
-## 📄 License
-
-MIT - Use this project however you want
-
----
-
-**Note**: This project is not affiliated with Anthropic or Cursor. It's a community tool to improve the development experience.
+MIT. Not affiliated with Anthropic, Cursor, or ngrok.

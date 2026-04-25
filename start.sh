@@ -1,25 +1,15 @@
 #!/bin/bash
+# Legacy wrapper. Prefer `cursor-claude start` (see README).
+# This script installs deps, builds, and delegates to the CLI.
+set -e
 
-echo "🚀 Starting Anthropic to OpenAI Proxy Server..."
-echo ""
-
-# Check if node_modules exists
 if [ ! -d "node_modules" ]; then
-    echo "📦 Installing dependencies..."
-    bun install
-    echo ""
+    echo "Installing dependencies..."
+    npm install
 fi
 
-echo "🔨 Building project..."
-bun run build
+echo "Building..."
+npm run build
 
-
-echo "🌐 Server starting on http://your-domain.com"
-echo "📚 API Documentation: http://your-domain.com/"
-echo "🔐 OAuth Login: http://your-domain.com/auth/login"
-echo ""
-echo "Press Ctrl+C to stop the server"
-echo ""
-
-# Start the server with bun and load .env file
-bun run start 
+echo "Starting cursor-claude..."
+exec node ./bin/cursor-claude.js start "$@"
