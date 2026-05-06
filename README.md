@@ -96,6 +96,21 @@ cursor-claude models --json | jq '.data[].id'
 
 The same data is served at `GET /v1/models` on the running proxy, so any OpenAI-compatible client that requests `/v1/models` (Cursor included) can discover them automatically too.
 
+### Cursor blocks `claude-*` names — use suffixes instead
+
+Cursor 4.6+ recognises `claude-*` model ids natively and refuses to add them via **Settings → Models → Add model** when a custom base URL is set. The workaround is to add a suffix that Cursor passes through verbatim:
+
+| What you register in Cursor | What the proxy forwards to Anthropic |
+|---|---|
+| `claude-sonnet-4-6-thinking-xhigh` | `claude-sonnet-4-6` with adaptive thinking + effort `xhigh` |
+| `claude-sonnet-4-6-thinking` | `claude-sonnet-4-6` with adaptive thinking |
+| `claude-sonnet-4-6-medium` | `claude-sonnet-4-6` with effort `medium` |
+| `claude-sonnet-4-5-thinking` | `claude-sonnet-4-5` with enabled thinking, `budget_tokens: 16000` |
+
+Supported effort levels: `low`, `medium`, `high`, `xhigh`, `max`.
+
+The proxy strips the suffix automatically, sets the matching Anthropic API parameters (`thinking`, `output_config.effort`), and forwards the canonical model id — no changes required on your end beyond picking the right name in Cursor.
+
 ## API key behavior
 
 The proxy always requires clients to send an API key. The CLI manages this for you:

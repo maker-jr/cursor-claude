@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from '../../src/http/app'
+import { resetModelIdCache } from '../../src/http/routes/messages'
 import {
   fakeAnthropicClient,
   fakeOAuthClient,
@@ -34,7 +35,22 @@ function validAuthedDeps(overrides: Partial<Parameters<typeof createApp>[0]> = {
   }
 }
 
+// A minimal models.dev-shaped payload covering the model ids used in these tests.
+const FAKE_MODELS_PAYLOAD = {
+  anthropic: {
+    models: {
+      'claude-sonnet-4-6': { name: 'Claude Sonnet 4.6', release_date: '2025-11-01' },
+      'claude-sonnet-4-5': { name: 'Claude Sonnet 4.5', release_date: '2025-06-01' },
+      'claude-opus-4-6': { name: 'Claude Opus 4.6', release_date: '2025-11-01' },
+    },
+  },
+}
+
 describe('POST /v1/chat/completions (integration, in-process)', () => {
+  beforeEach(() => {
+    resetModelIdCache()
+  })
+
   it('returns a 401 when the authorization header does not match', async () => {
     const app = createApp(validAuthedDeps())
     const res = await app.fetch(
@@ -248,5 +264,133 @@ describe('POST /v1/chat/completions (integration, in-process)', () => {
     )
     expect(anthropic.calls[0].accessToken).toBe('access-new')
     expect(store.data['auth:anthropic'].access).toBe('access-new')
+  })
+
+  // -------------------------------------------------------------------------
+  // Model-name suffix normalisation
+  // -------------------------------------------------------------------------
+
+  it('strips -thinking-xhigh suffix and sets adaptive thinking + effort for 4.6 model', async () => {
+    let capturedBody: unknown
+    const anthropic = fakeAnthropicClient({
+      models: FAKE_MODELS_PAYLOAD,
+      onSendMessages: (opts) => {
+        capturedBody = opts.body
+        return {
+          ok: true,
+          status: 200,
+          headers: {},
+          body: null,
+          json: {
+            id: 'msg_1',
+            model: 'claude-sonnet-4-6',
+            content: [{ type: 'text', text: 'ok' }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }
+      },
+    })
+    const app = createApp(validAuthedDeps({ anthropic }))
+    const res = await app.fetch(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer test-key',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6-thinking-xhigh',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      }),
+    )
+    expect(res.status).toBe(200)
+    const body = capturedBody as Record<string, unknown>
+    expect(body.model).toBe('claude-sonnet-4-6')
+    expect(body.thinking).toEqual({ type: 'adaptive' })
+    expect((body.output_config as Record<string, unknown>).effort).toBe('xhigh')
+  })
+
+  it('strips -medium suffix and sets only effort (no thinking) for 4.6 model', async () => {
+    let capturedBody: unknown
+    const anthropic = fakeAnthropicClient({
+      models: FAKE_MODELS_PAYLOAD,
+      onSendMessages: (opts) => {
+        capturedBody = opts.body
+        return {
+          ok: true,
+          status: 200,
+          headers: {},
+          body: null,
+          json: {
+            id: 'msg_2',
+            model: 'claude-sonnet-4-6',
+            content: [{ type: 'text', text: 'ok' }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }
+      },
+    })
+    const app = createApp(validAuthedDeps({ anthropic }))
+    await app.fetch(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer test-key',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6-medium',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      }),
+    )
+    const body = capturedBody as Record<string, unknown>
+    expect(body.model).toBe('claude-sonnet-4-6')
+    expect(body.thinking).toBeUndefined()
+    expect((body.output_config as Record<string, unknown>).effort).toBe('medium')
+  })
+
+  it('strips -thinking suffix from 4.5 model and uses enabled thinking with default budget', async () => {
+    let capturedBody: unknown
+    const anthropic = fakeAnthropicClient({
+      models: FAKE_MODELS_PAYLOAD,
+      onSendMessages: (opts) => {
+        capturedBody = opts.body
+        return {
+          ok: true,
+          status: 200,
+          headers: {},
+          body: null,
+          json: {
+            id: 'msg_3',
+            model: 'claude-sonnet-4-5',
+            content: [{ type: 'text', text: 'ok' }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }
+      },
+    })
+    const app = createApp(validAuthedDeps({ anthropic }))
+    await app.fetch(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer test-key',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-5-thinking',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      }),
+    )
+    const body = capturedBody as Record<string, unknown>
+    expect(body.model).toBe('claude-sonnet-4-5')
+    expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 16_000 })
+    expect(body.output_config).toBeUndefined()
   })
 })

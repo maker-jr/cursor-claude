@@ -4,6 +4,9 @@ import {
   createCursorBypassResponse,
   isCursorKeyCheck,
 } from '../../domain/proxy/cursor-bypass'
+import { applyThinkingAndEffort } from '../../domain/proxy/extended-thinking'
+import { STATIC_FALLBACK_IDS, parseModelName } from '../../domain/proxy/model-name'
+import { extractAnthropicModels } from '../../domain/proxy/models'
 import {
   createConverterState,
   processChunk,
@@ -22,6 +25,72 @@ import type { CredentialStore } from '../../ports/credential-store'
 import type { Logger } from '../../ports/logger'
 import type { OAuthClient } from '../../ports/oauth-client'
 import { checkApiKey } from '../middleware/require-api-key'
+
+// ---------------------------------------------------------------------------
+// Model-name normalisation cache
+// ---------------------------------------------------------------------------
+
+const MODEL_ID_CACHE_TTL_MS = 5 * 60 * 1_000
+
+let _cachedModelIds: readonly string[] | null = null
+let _cacheExpiresAt = 0
+
+/** Reset the model-id cache. Exported for use in tests only. */
+export function resetModelIdCache(): void {
+  _cachedModelIds = null
+  _cacheExpiresAt = 0
+}
+
+async function fetchCachedModelIds(
+  anthropic: AnthropicClient,
+): Promise<readonly string[]> {
+  const now = Date.now()
+  if (_cachedModelIds !== null && now < _cacheExpiresAt) {
+    return _cachedModelIds
+  }
+  try {
+    const raw = await anthropic.fetchModels()
+    const entries = extractAnthropicModels(
+      raw as Parameters<typeof extractAnthropicModels>[0],
+    )
+    if (entries.length > 0) {
+      _cachedModelIds = entries.map((e) => e.id)
+      _cacheExpiresAt = now + MODEL_ID_CACHE_TTL_MS
+      return _cachedModelIds
+    }
+  } catch {
+    // fall through to static fallback
+  }
+  return STATIC_FALLBACK_IDS
+}
+
+/**
+ * Normalise `body.model` in-place: strip Cursor-appended suffixes and inject
+ * the corresponding Anthropic API params (`thinking`, `output_config.effort`).
+ * Warn-logs unrecognised suffix tokens so operators can spot them.
+ */
+async function normalizeModelInBody(
+  body: AnthropicRequestBody,
+  anthropic: AnthropicClient,
+  logger: Logger,
+): Promise<void> {
+  const knownIds = await fetchCachedModelIds(anthropic)
+  const originalModel = body.model
+  const parsed = parseModelName(body.model, knownIds)
+  if (parsed === null) return
+
+  body.model = parsed.canonicalId
+
+  applyThinkingAndEffort(body, parsed)
+
+  if (parsed.unknownSuffix.length > 0) {
+    logger.warn('unrecognized model suffix tokens stripped', {
+      original: originalModel,
+      unknownSuffix: parsed.unknownSuffix,
+      canonicalId: parsed.canonicalId,
+    })
+  }
+}
 
 export interface MessagesDeps {
   anthropic: AnthropicClient
@@ -90,6 +159,8 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
     }
 
     try {
+      await normalizeModelInBody(body, deps.anthropic, deps.logger)
+
       const { transformToOpenAIFormat } = transformRequest(body)
 
       const oauthToken = await resolveAccessToken(deps)
