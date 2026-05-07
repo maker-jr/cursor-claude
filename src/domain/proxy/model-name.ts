@@ -8,6 +8,10 @@
 //   claude-sonnet-4-6-medium
 //   claude-opus-4-6-thinking
 //
+// Cursor sometimes emits model names with dots as version-separators instead
+// of hyphens (e.g. claude-sonnet-4.6-medium). We normalise dots between digits
+// to hyphens before matching so both forms resolve to the same canonical id.
+//
 // This module strips those suffixes, identifies the canonical id, and surfaces
 // the parsed metadata so callers can inject the correct Anthropic API params.
 
@@ -52,7 +56,28 @@ export const STATIC_FALLBACK_IDS: readonly string[] = [
 ]
 
 /**
+ * Normalise dots used as version separators to hyphens.
+ *
+ * Cursor sometimes registers model names with dots (e.g. "claude-sonnet-4.6").
+ * Anthropic's canonical ids use hyphens ("claude-sonnet-4-6"). We convert
+ * dots that sit between two digit characters so that both forms match the
+ * same catalog entry.
+ *
+ * "4.6" → "4-6"   "4.5.1" → "4-5-1"   "sonnet.4" → "sonnet.4" (unchanged —
+ * dot is not between two digits so we leave it alone to avoid false-positives).
+ */
+export function normalizeDotVersions(input: string): string {
+  // Use a lookahead for the trailing digit so consecutive dots in version
+  // strings like "4.5.1" are all converted ("4.5.1" → "4-5-1").
+  return input.replace(/(\d)\.(?=\d)/g, '$1-')
+}
+
+/**
  * Parse a (potentially Cursor-suffixed) model name string.
+ *
+ * Dots used as version separators (e.g. "4.6") are normalised to hyphens
+ * before matching so "claude-sonnet-4.6-medium" and "claude-sonnet-4-6-medium"
+ * both resolve to the same canonical id.
  *
  * Uses longest-prefix match against `knownModelIds` to identify the canonical
  * id. The remainder is tokenised on "-" and each token classified:
@@ -68,20 +93,21 @@ export function parseModelName(
   input: string,
   knownModelIds: readonly string[],
 ): ParsedModelName | null {
+  const normalised = normalizeDotVersions(input)
   const sorted = [...knownModelIds].sort((a, b) => b.length - a.length)
 
   let canonicalId: string | null = null
   let remainder = ''
 
   for (const id of sorted) {
-    if (input === id) {
+    if (normalised === id) {
       canonicalId = id
       remainder = ''
       break
     }
-    if (input.startsWith(id + '-')) {
+    if (normalised.startsWith(id + '-')) {
       canonicalId = id
-      remainder = input.slice(id.length + 1)
+      remainder = normalised.slice(id.length + 1)
       break
     }
   }

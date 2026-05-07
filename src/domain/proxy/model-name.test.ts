@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   STATIC_FALLBACK_IDS,
+  normalizeDotVersions,
   parseModelName,
   type ParsedModelName,
 } from './model-name'
@@ -181,5 +182,73 @@ describe('STATIC_FALLBACK_IDS', () => {
     expect(result?.canonicalId).toBe('claude-sonnet-4-6')
     expect(result?.thinking).toBe(true)
     expect(result?.effort).toBe('xhigh')
+  })
+})
+
+describe('normalizeDotVersions', () => {
+  it('converts a dot between digits to a hyphen', () => {
+    expect(normalizeDotVersions('claude-sonnet-4.6')).toBe('claude-sonnet-4-6')
+  })
+
+  it('converts multiple digit-dot-digit occurrences', () => {
+    expect(normalizeDotVersions('claude-opus-4.5.1')).toBe('claude-opus-4-5-1')
+  })
+
+  it('leaves dots that are not between two digits unchanged', () => {
+    expect(normalizeDotVersions('claude-sonnet.latest')).toBe('claude-sonnet.latest')
+    expect(normalizeDotVersions('claude.sonnet-4-6')).toBe('claude.sonnet-4-6')
+  })
+
+  it('is a no-op for strings with no dots', () => {
+    expect(normalizeDotVersions('claude-sonnet-4-6-thinking')).toBe(
+      'claude-sonnet-4-6-thinking',
+    )
+  })
+})
+
+describe('parseModelName — dot version separators', () => {
+  it('parses claude-sonnet-4.6-medium (dot between version digits)', () => {
+    expect(parse('claude-sonnet-4.6-medium')).toEqual({
+      canonicalId: 'claude-sonnet-4-6',
+      thinking: false,
+      effort: 'medium',
+      unknownSuffix: [],
+    })
+  })
+
+  it('parses claude-sonnet-4.6-thinking-xhigh', () => {
+    expect(parse('claude-sonnet-4.6-thinking-xhigh')).toEqual({
+      canonicalId: 'claude-sonnet-4-6',
+      thinking: true,
+      effort: 'xhigh',
+      unknownSuffix: [],
+    })
+  })
+
+  it('parses claude-opus-4.6-thinking', () => {
+    expect(parse('claude-opus-4.6-thinking')).toEqual({
+      canonicalId: 'claude-opus-4-6',
+      thinking: true,
+      effort: null,
+      unknownSuffix: [],
+    })
+  })
+
+  it('parses bare claude-sonnet-4.6 (no suffix)', () => {
+    expect(parse('claude-sonnet-4.6')).toEqual({
+      canonicalId: 'claude-sonnet-4-6',
+      thinking: false,
+      effort: null,
+      unknownSuffix: [],
+    })
+  })
+
+  it('parses claude-opus-4.7-thinking-max', () => {
+    expect(parse('claude-opus-4.7-thinking-max')).toEqual({
+      canonicalId: 'claude-opus-4-7',
+      thinking: true,
+      effort: 'max',
+      unknownSuffix: [],
+    })
   })
 })
