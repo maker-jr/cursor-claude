@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   STATIC_FALLBACK_IDS,
   normalizeDotVersions,
+  normalizeWordOrder,
   parseModelName,
   type ParsedModelName,
 } from './model-name'
@@ -245,6 +246,79 @@ describe('parseModelName — dot version separators', () => {
 
   it('parses claude-opus-4.7-thinking-max', () => {
     expect(parse('claude-opus-4.7-thinking-max')).toEqual({
+      canonicalId: 'claude-opus-4-7',
+      thinking: true,
+      effort: 'max',
+      unknownSuffix: [],
+    })
+  })
+})
+
+describe('normalizeWordOrder', () => {
+  it('swaps version-before-family to canonical order', () => {
+    expect(normalizeWordOrder('claude-4-6-sonnet')).toBe('claude-sonnet-4-6')
+    expect(normalizeWordOrder('claude-4-5-opus')).toBe('claude-opus-4-5')
+    expect(normalizeWordOrder('claude-4-5-haiku')).toBe('claude-haiku-4-5')
+    expect(normalizeWordOrder('claude-4-7-opus')).toBe('claude-opus-4-7')
+  })
+
+  it('preserves the suffix tokens after the family name', () => {
+    expect(normalizeWordOrder('claude-4-6-sonnet-medium')).toBe('claude-sonnet-4-6-medium')
+    expect(normalizeWordOrder('claude-4-6-sonnet-thinking-xhigh')).toBe(
+      'claude-sonnet-4-6-thinking-xhigh',
+    )
+  })
+
+  it('leaves already-canonical names unchanged', () => {
+    expect(normalizeWordOrder('claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
+    expect(normalizeWordOrder('claude-opus-4-6-thinking')).toBe('claude-opus-4-6-thinking')
+  })
+
+  it('leaves non-Claude strings unchanged', () => {
+    expect(normalizeWordOrder('gpt-4o')).toBe('gpt-4o')
+    expect(normalizeWordOrder('claude-3-opus')).toBe('claude-3-opus')
+  })
+})
+
+describe('parseModelName — inverted word order', () => {
+  it('parses claude-4-6-sonnet-medium (version before family, hyphen version)', () => {
+    expect(parse('claude-4-6-sonnet-medium')).toEqual({
+      canonicalId: 'claude-sonnet-4-6',
+      thinking: false,
+      effort: 'medium',
+      unknownSuffix: [],
+    })
+  })
+
+  it('parses claude-4.6-sonnet-medium (version before family, dot version)', () => {
+    expect(parse('claude-4.6-sonnet-medium')).toEqual({
+      canonicalId: 'claude-sonnet-4-6',
+      thinking: false,
+      effort: 'medium',
+      unknownSuffix: [],
+    })
+  })
+
+  it('parses claude-4.6-sonnet-thinking-xhigh', () => {
+    expect(parse('claude-4.6-sonnet-thinking-xhigh')).toEqual({
+      canonicalId: 'claude-sonnet-4-6',
+      thinking: true,
+      effort: 'xhigh',
+      unknownSuffix: [],
+    })
+  })
+
+  it('parses claude-4.6-sonnet (no suffix, dot version, inverted)', () => {
+    expect(parse('claude-4.6-sonnet')).toEqual({
+      canonicalId: 'claude-sonnet-4-6',
+      thinking: false,
+      effort: null,
+      unknownSuffix: [],
+    })
+  })
+
+  it('parses claude-4-7-opus-thinking-max (inverted, hyphen, no dots)', () => {
+    expect(parse('claude-4-7-opus-thinking-max')).toEqual({
       canonicalId: 'claude-opus-4-7',
       thinking: true,
       effort: 'max',

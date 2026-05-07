@@ -4,13 +4,14 @@
 // Background: Cursor 4.6+ natively recognises `claude-*` ids and refuses to
 // add them via "Override OpenAI Base URL". Users work around this by
 // registering variant names such as:
-//   claude-sonnet-4-6-thinking-xhigh
-//   claude-sonnet-4-6-medium
-//   claude-opus-4-6-thinking
+//   claude-sonnet-4-6-thinking-xhigh   (canonical order, hyphen-separated)
+//   claude-sonnet-4.6-medium            (dot version separator)
+//   claude-4.6-sonnet-medium            (version before family name)
+//   claude-4-6-sonnet-medium            (version before family name, no dots)
 //
-// Cursor sometimes emits model names with dots as version-separators instead
-// of hyphens (e.g. claude-sonnet-4.6-medium). We normalise dots between digits
-// to hyphens before matching so both forms resolve to the same canonical id.
+// Two normalisation steps run before catalog matching:
+//   1. Dot-version normalisation  — "4.6" → "4-6"
+//   2. Word-order normalisation   — "claude-4-6-sonnet" → "claude-sonnet-4-6"
 //
 // This module strips those suffixes, identifies the canonical id, and surfaces
 // the parsed metadata so callers can inject the correct Anthropic API params.
@@ -73,11 +74,43 @@ export function normalizeDotVersions(input: string): string {
 }
 
 /**
+ * Known Claude model family names (the word between "claude-" and the version).
+ * Used to detect and fix inverted word-order like "claude-4-6-sonnet".
+ */
+const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'mythos'] as const
+
+/**
+ * Normalise inverted word-order in Cursor model names.
+ *
+ * Cursor sometimes emits "claude-<version>-<family>" instead of the canonical
+ * "claude-<family>-<version>". After dot-version normalisation the version is
+ * already all-digits-and-hyphens, so we can detect this shape with a regex and
+ * swap the segments back into canonical order.
+ *
+ * "claude-4-6-sonnet"        → "claude-sonnet-4-6"
+ * "claude-4-6-sonnet-medium" → "claude-sonnet-4-6-medium"  (suffix preserved)
+ * "claude-sonnet-4-6"        → unchanged  (already canonical)
+ */
+export function normalizeWordOrder(input: string): string {
+  // Match: claude - <major>-<minor>[…] - <known family> - <optional rest>
+  // The version part must contain at least one hyphen (e.g. "4-6", "4-5-1")
+  // so bare single-digit Claude 3 names like "claude-3-opus" are left alone.
+  const familyPattern = MODEL_FAMILIES.join('|')
+  const re = new RegExp(
+    `^(claude)-(\\d+(?:-\\d+)+)-(${familyPattern})((?:-.+)?)$`,
+  )
+  const m = re.exec(input)
+  if (!m) return input
+  const [, prefix, version, family, rest] = m
+  return `${prefix}-${family}-${version}${rest}`
+}
+
+/**
  * Parse a (potentially Cursor-suffixed) model name string.
  *
- * Dots used as version separators (e.g. "4.6") are normalised to hyphens
- * before matching so "claude-sonnet-4.6-medium" and "claude-sonnet-4-6-medium"
- * both resolve to the same canonical id.
+ * Two normalisation steps run before catalog matching:
+ *   1. Dot-version separators are converted to hyphens ("4.6" → "4-6").
+ *   2. Inverted word order is corrected ("claude-4-6-sonnet" → "claude-sonnet-4-6").
  *
  * Uses longest-prefix match against `knownModelIds` to identify the canonical
  * id. The remainder is tokenised on "-" and each token classified:
@@ -93,7 +126,7 @@ export function parseModelName(
   input: string,
   knownModelIds: readonly string[],
 ): ParsedModelName | null {
-  const normalised = normalizeDotVersions(input)
+  const normalised = normalizeWordOrder(normalizeDotVersions(input))
   const sorted = [...knownModelIds].sort((a, b) => b.length - a.length)
 
   let canonicalId: string | null = null
