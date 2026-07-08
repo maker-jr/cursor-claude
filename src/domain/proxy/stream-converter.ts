@@ -23,6 +23,14 @@ interface MetricsData {
 export interface ConverterState {
   toolCallsTracker: Map<number, ToolCallTracker>
   metricsData: MetricsData
+  // Holds the tail of the input that hasn't yet been terminated by a '\n'.
+  // TCP/HTTP reads don't respect SSE line framing, so a `data: {...}` line
+  // (and the JSON string inside it) can be split across two separate
+  // `processChunk` calls. Without carrying this over, the trailing partial
+  // line in one call and the leading partial line in the next both fail
+  // JSON.parse independently and are silently dropped — the bug this buffer
+  // fixes.
+  pendingLine: string
 }
 
 export interface ProcessResult {
@@ -43,58 +51,101 @@ export function createConverterState(): ConverterState {
       messageId: null,
       openAIId: null,
     },
+    pendingLine: '',
   }
 }
 
 // Parse an SSE chunk from Anthropic and emit the corresponding OpenAI
 // chat.completion.chunk events. The state is mutated across calls, allowing
 // the caller to feed arbitrarily-split network buffers.
+//
+// Network reads can split a `data: {...}` line anywhere, including in the
+// middle of the JSON payload — not just at line boundaries. To handle this,
+// only the last line of each input chunk is treated as possibly-incomplete:
+// it's held in `state.pendingLine` and prepended to the next call's input
+// instead of being parsed immediately. All earlier lines end with a '\n' we
+// just saw, so they're safe to parse right away.
 export function processChunk(
   state: ConverterState,
   chunk: string,
   enableLogging: boolean = false,
 ): ProcessResult[] {
   const results: ProcessResult[] = []
-  const lines = chunk.split('\n')
+  const combined = state.pendingLine + chunk
+  const lines = combined.split('\n')
+  // The last element is either '' (input ended with '\n', all lines complete)
+  // or a partial line that hasn't been terminated yet — hold it for next time.
+  state.pendingLine = lines.pop() ?? ''
 
   for (const line of lines) {
-    const trimmedLine = line.trim()
-    if (trimmedLine === '') continue
-    if (trimmedLine.startsWith('event:')) continue
+    const result = parseLine(state, line, enableLogging)
+    results.push(...result)
+  }
 
-    if (trimmedLine.startsWith('data: ') && trimmedLine.includes('{')) {
-      try {
-        const data: AnthropicStreamEvent = JSON.parse(
-          trimmedLine.replace(/^data: /, ''),
-        )
+  return results
+}
 
-        if (data.type === 'ping' || data.type === 'content_block_stop') continue
+/**
+ * Process whatever is left in `state.pendingLine` as a final, terminated
+ * line. Call this once after the upstream stream ends (reader signals
+ * `done`), in case the very last SSE line wasn't followed by a trailing
+ * newline — otherwise it would sit in the buffer forever and its content
+ * would be silently lost.
+ */
+export function flushPendingLine(
+  state: ConverterState,
+  enableLogging: boolean = false,
+): ProcessResult[] {
+  if (state.pendingLine === '') return []
+  const line = state.pendingLine
+  state.pendingLine = ''
+  return parseLine(state, line, enableLogging)
+}
 
-        if (
-          data.type === 'content_block_start' &&
-          data.content_block?.type === 'text'
-        ) {
-          continue
+function parseLine(
+  state: ConverterState,
+  line: string,
+  enableLogging: boolean,
+): ProcessResult[] {
+  const results: ProcessResult[] = []
+  const trimmedLine = line.trim()
+  if (trimmedLine === '') return results
+  if (trimmedLine.startsWith('event:')) return results
+
+  if (trimmedLine.startsWith('data: ') && trimmedLine.includes('{')) {
+    try {
+      const data: AnthropicStreamEvent = JSON.parse(
+        trimmedLine.replace(/^data: /, ''),
+      )
+
+      if (data.type === 'ping' || data.type === 'content_block_stop') {
+        return results
+      }
+
+      if (
+        data.type === 'content_block_start' &&
+        data.content_block?.type === 'text'
+      ) {
+        return results
+      }
+
+      updateMetrics(state.metricsData, data)
+
+      const openAIChunk = transformToOpenAI(state, data, enableLogging)
+      if (openAIChunk) {
+        results.push({ type: 'chunk', data: openAIChunk })
+      }
+
+      if (data.type === 'message_stop') {
+        const usageChunk = createUsageChunk(state)
+        if (usageChunk) {
+          results.push({ type: 'chunk', data: usageChunk })
         }
-
-        updateMetrics(state.metricsData, data)
-
-        const openAIChunk = transformToOpenAI(state, data, enableLogging)
-        if (openAIChunk) {
-          results.push({ type: 'chunk', data: openAIChunk })
-        }
-
-        if (data.type === 'message_stop') {
-          const usageChunk = createUsageChunk(state)
-          if (usageChunk) {
-            results.push({ type: 'chunk', data: usageChunk })
-          }
-          results.push({ type: 'done' })
-        }
-      } catch (parseError) {
-        if (enableLogging) {
-          console.error('Parse error:', parseError)
-        }
+        results.push({ type: 'done' })
+      }
+    } catch (parseError) {
+      if (enableLogging) {
+        console.error('Parse error:', parseError)
       }
     }
   }

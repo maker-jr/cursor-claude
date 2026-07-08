@@ -9,6 +9,7 @@ import { STATIC_FALLBACK_IDS, parseModelName } from '../../domain/proxy/model-na
 import { extractAnthropicModels } from '../../domain/proxy/models'
 import {
   createConverterState,
+  flushPendingLine,
   processChunk,
 } from '../../domain/proxy/stream-converter'
 import { convertNonStreamingResponse } from '../../domain/proxy/transform-response'
@@ -247,6 +248,20 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
                 }
               } else {
                 await writer.write(chunk)
+              }
+            }
+
+            // The upstream may end without a trailing newline after the last
+            // SSE line; flush whatever line-fragment is still buffered so it
+            // isn't silently lost.
+            if (transformToOpenAIFormat) {
+              const finalResults = flushPendingLine(converterState)
+              for (const result of finalResults) {
+                if (result.type === 'chunk' && result.data) {
+                  await writer.write(`data: ${JSON.stringify(result.data)}\n\n`)
+                } else if (result.type === 'done') {
+                  await writer.write('data: [DONE]\n\n')
+                }
               }
             }
           } catch (err) {

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-07-08
+
+### Fixed
+
+- Fixed silent content loss during streaming responses when a network read split a `data: {...}` SSE line mid-JSON (not on a newline boundary). This is common on longer responses and over tunneled connections (e.g. ngrok), and previously caused text or tool-call arguments to vanish from the response with no error surfaced anywhere — the stream would just appear to slow down and drop content. `processChunk` now buffers an incomplete trailing line across calls (`ConverterState.pendingLine`) instead of parsing partial JSON and silently discarding the parse failure. A new `flushPendingLine()` is invoked when the upstream stream ends to catch a final line that never received a trailing newline.
+
+[1.2.2]: https://github.com/maker-jr/cursor-claude/releases/tag/v1.2.2
+
 ## [1.2.1] - 2026-05-07
 
 ### Fixed

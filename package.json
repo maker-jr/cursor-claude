@@ -1,6 +1,6 @@
 {
   "name": "cursor-claude",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "CLI proxy to use Cursor (and other OpenAI-compatible IDEs) with your Claude Pro/Max subscription",
   "main": "dist/server.js",
   "bin": {

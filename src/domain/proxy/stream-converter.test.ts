@@ -76,4 +76,63 @@ describe('stream converter', () => {
     const combined = [...first, ...second]
     expect(combined.at(-1)?.type).toBe('done')
   })
+
+  it('reconstructs full text when a network read splits mid-JSON-string (not on a newline boundary)', () => {
+    // Real TCP reads land anywhere, not just on '\n'. Split inside the
+    // `data: {...}` line's JSON string itself to reproduce a realistic
+    // mid-token split.
+    const sse = loadFixture('text-reply.sse')
+    const marker = '"text":"Hello'
+    const splitPoint = sse.indexOf(marker) + marker.length - 2 // land mid-word
+    expect(splitPoint).toBeGreaterThan(0)
+
+    const state = createConverterState()
+    const first = processChunk(state, sse.slice(0, splitPoint))
+    const second = processChunk(state, sse.slice(splitPoint))
+    const chunks = [...first, ...second]
+      .filter((r) => r.type === 'chunk')
+      .map((r) => r.data!)
+
+    const text = chunks
+      .map((c) => c.choices[0].delta.content)
+      .filter((t): t is string => typeof t === 'string')
+      .join('')
+    expect(text).toBe('Hello, world!')
+  })
+
+  it('reconstructs full text when a split lands mid-JSON-string across multiple deltas (multi-block fixture)', () => {
+    const sse = loadFixture('multi-block.sse')
+    const marker = '"text":"Let me check'
+    const splitPoint = sse.indexOf(marker) + marker.length - 3
+
+    const state = createConverterState()
+    const first = processChunk(state, sse.slice(0, splitPoint))
+    const second = processChunk(state, sse.slice(splitPoint))
+    const chunks = [...first, ...second]
+      .filter((r) => r.type === 'chunk')
+      .map((r) => r.data!)
+
+    const text = chunks
+      .map((c) => c.choices[0].delta.content)
+      .filter((t): t is string => typeof t === 'string')
+      .join('')
+    expect(text).toBe('Let me check the weather for you.')
+  })
+
+  it('handles a chunk split into many small pieces (byte-by-byte-ish) without losing content', () => {
+    const sse = loadFixture('text-reply.sse')
+    const state = createConverterState()
+    const pieceSize = 7
+    const results: ReturnType<typeof processChunk> = []
+    for (let i = 0; i < sse.length; i += pieceSize) {
+      results.push(...processChunk(state, sse.slice(i, i + pieceSize)))
+    }
+    const chunks = results.filter((r) => r.type === 'chunk').map((r) => r.data!)
+    const text = chunks
+      .map((c) => c.choices[0].delta.content)
+      .filter((t): t is string => typeof t === 'string')
+      .join('')
+    expect(text).toBe('Hello, world!')
+    expect(results.at(-1)?.type).toBe('done')
+  })
 })
