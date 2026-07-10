@@ -62,8 +62,10 @@ program
     'run the server in the background; logs to ~/.config/cursor-claude/server.log',
   )
   .option(
-    '-t, --tunnel',
-    'expose the proxy via an ngrok HTTPS tunnel (required for Cursor)',
+    '-t, --tunnel [provider]',
+    'expose the proxy via a public HTTPS tunnel (required for Cursor). ' +
+      'Provider: cloudflared | ngrok. Default: cloudflared if installed, else ngrok.',
+    parseTunnelProvider,
   )
   .option(
     '-k, --api-key <key>',
@@ -74,14 +76,16 @@ program
       port?: number
       autoPort?: boolean
       detach?: boolean
-      tunnel?: boolean
+      tunnel?: boolean | 'cloudflared' | 'ngrok'
       apiKey?: string
     }) => {
       await runStart(buildDeps(), {
         port: opts.port,
         autoPort: opts.autoPort !== false,
         detach: !!opts.detach,
-        tunnel: !!opts.tunnel,
+        // Bare --tunnel parses to `true`; a value parses to the provider name.
+        tunnel:
+          opts.tunnel === true ? 'auto' : opts.tunnel ? opts.tunnel : false,
         apiKey: opts.apiKey,
       })
     },
@@ -111,6 +115,13 @@ program
   .action(async () => {
     await runLogout(buildDeps())
   })
+
+function parseTunnelProvider(value: string): 'cloudflared' | 'ngrok' {
+  if (value === 'cloudflared' || value === 'ngrok') return value
+  throw new Error(
+    `Invalid tunnel provider: ${value} (expected "cloudflared" or "ngrok")`,
+  )
+}
 
 function parsePort(value: string): number {
   const n = Number(value)

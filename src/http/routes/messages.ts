@@ -20,9 +20,16 @@ import type {
   ErrorResponse,
 } from '../../domain/proxy/types'
 import { decideTokenAction } from '../../domain/auth/token-lifecycle'
-import type { AnthropicClient } from '../../ports/anthropic-client'
+import type {
+  AnthropicClient,
+  AnthropicFetchOptions,
+  AnthropicFetchResponse,
+} from '../../ports/anthropic-client'
 import type { Clock } from '../../ports/clock'
-import type { CredentialStore } from '../../ports/credential-store'
+import type {
+  CredentialStore,
+  OAuthCredentials,
+} from '../../ports/credential-store'
 import type { Logger } from '../../ports/logger'
 import type { OAuthClient } from '../../ports/oauth-client'
 import { checkApiKey } from '../middleware/require-api-key'
@@ -32,23 +39,24 @@ import { checkApiKey } from '../middleware/require-api-key'
 // ---------------------------------------------------------------------------
 
 const MODEL_ID_CACHE_TTL_MS = 5 * 60 * 1_000
+// After a failed refresh, wait this long before trying models.dev again so an
+// outage there never adds per-request latency here.
+const MODEL_ID_NEGATIVE_TTL_MS = 60 * 1_000
 
 let _cachedModelIds: readonly string[] | null = null
 let _cacheExpiresAt = 0
+let _refreshInFlight: Promise<readonly string[]> | null = null
 
 /** Reset the model-id cache. Exported for use in tests only. */
 export function resetModelIdCache(): void {
   _cachedModelIds = null
   _cacheExpiresAt = 0
+  _refreshInFlight = null
 }
 
-async function fetchCachedModelIds(
+async function refreshModelIds(
   anthropic: AnthropicClient,
 ): Promise<readonly string[]> {
-  const now = Date.now()
-  if (_cachedModelIds !== null && now < _cacheExpiresAt) {
-    return _cachedModelIds
-  }
   try {
     const raw = await anthropic.fetchModels()
     const entries = extractAnthropicModels(
@@ -56,13 +64,34 @@ async function fetchCachedModelIds(
     )
     if (entries.length > 0) {
       _cachedModelIds = entries.map((e) => e.id)
-      _cacheExpiresAt = now + MODEL_ID_CACHE_TTL_MS
+      _cacheExpiresAt = Date.now() + MODEL_ID_CACHE_TTL_MS
       return _cachedModelIds
     }
   } catch {
-    // fall through to static fallback
+    // fall through to the negative-cache path
   }
-  return STATIC_FALLBACK_IDS
+  _cachedModelIds = _cachedModelIds ?? STATIC_FALLBACK_IDS
+  _cacheExpiresAt = Date.now() + MODEL_ID_NEGATIVE_TTL_MS
+  return _cachedModelIds
+}
+
+// Chat requests must never wait on models.dev. Only the very first request
+// after startup blocks (bounded by the client's own short timeout); once any
+// list is cached — live, stale, or static fallback — it is served immediately
+// and refreshed in the background, single-flight.
+async function fetchCachedModelIds(
+  anthropic: AnthropicClient,
+): Promise<readonly string[]> {
+  if (_cachedModelIds !== null && Date.now() < _cacheExpiresAt) {
+    return _cachedModelIds
+  }
+  if (_refreshInFlight === null) {
+    _refreshInFlight = refreshModelIds(anthropic).finally(() => {
+      _refreshInFlight = null
+    })
+  }
+  if (_cachedModelIds !== null) return _cachedModelIds
+  return _refreshInFlight
 }
 
 /**
@@ -93,6 +122,97 @@ async function normalizeModelInBody(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Upstream retry / timeouts
+// ---------------------------------------------------------------------------
+
+// Only retried before any bytes have been forwarded to the client, so a retry
+// is invisible to it. 529 is Anthropic's "overloaded" status.
+const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504, 529])
+const RETRY_DELAYS_MS = [300, 1200]
+
+// Anthropic sends SSE pings every few seconds; a stream this quiet is dead.
+const STREAM_IDLE_TIMEOUT_MS = 90_000
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function sendMessagesWithRetry(
+  deps: MessagesDeps,
+  opts: AnthropicFetchOptions,
+): Promise<AnthropicFetchResponse> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await deps.anthropic.sendMessages(opts)
+      if (
+        res.ok ||
+        attempt >= RETRY_DELAYS_MS.length ||
+        !RETRYABLE_STATUSES.has(res.status)
+      ) {
+        return res
+      }
+      deps.logger.warn('retryable upstream status, retrying', {
+        status: res.status,
+        attempt: attempt + 1,
+      })
+    } catch (err) {
+      if (attempt >= RETRY_DELAYS_MS.length || opts.signal?.aborted) throw err
+      deps.logger.warn('upstream request failed, retrying', {
+        message: (err as Error).message,
+        attempt: attempt + 1,
+      })
+    }
+    await sleep(RETRY_DELAYS_MS[attempt])
+  }
+}
+
+function readWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+): Promise<Awaited<ReturnType<typeof reader.read>>> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`upstream stream idle for ${timeoutMs}ms`)),
+        timeoutMs,
+      )
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+// ---------------------------------------------------------------------------
+// Response header pass-through
+// ---------------------------------------------------------------------------
+
+// Body-framing and hop-by-hop headers must not be copied from the upstream
+// response: the proxy re-frames the body (and changes its size when
+// transforming), so a stale content-length makes clients wait forever for
+// bytes that never arrive.
+const SKIP_RESPONSE_HEADERS = new Set([
+  'content-encoding',
+  'content-length',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+])
+
+function copyUpstreamHeaders(
+  c: Context,
+  headers: Record<string, string>,
+): void {
+  for (const [key, value] of Object.entries(headers)) {
+    if (SKIP_RESPONSE_HEADERS.has(key)) continue
+    c.header(key, value)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OAuth token cache
+// ---------------------------------------------------------------------------
+
 export interface MessagesDeps {
   anthropic: AnthropicClient
   credentialStore: CredentialStore
@@ -107,31 +227,73 @@ export interface MessagesDeps {
 // The credential key used in the store for the Anthropic OAuth record.
 const AUTH_KEY = 'auth:anthropic'
 
+// Refresh this long before hard expiry, so in-flight requests never race the
+// expiry edge and a refresh happens exactly once instead of per-request.
+const TOKEN_EXPIRY_BUFFER_MS = 30_000
+
+interface TokenCache {
+  // In-memory copy of the store record; skips the credential-store round-trip
+  // (an HTTPS call on Upstash, a disk read locally) on every request.
+  creds: OAuthCredentials | null
+  // Single-flight refresh: concurrent requests share one refreshToken call.
+  // Anthropic rotates refresh tokens, so parallel refreshes would invalidate
+  // each other's credentials and force a manual re-login.
+  refreshing: Promise<string | null> | null
+}
+
+async function doRefresh(
+  deps: MessagesDeps,
+  cache: TokenCache,
+  refreshToken: string,
+): Promise<string | null> {
+  try {
+    const tokens = await deps.oauth.refreshToken(refreshToken)
+    const creds: OAuthCredentials = {
+      type: 'oauth',
+      refresh: tokens.refresh_token,
+      access: tokens.access_token,
+      expires: deps.clock.now() + tokens.expires_in * 1000,
+    }
+    cache.creds = creds
+    await deps.credentialStore.set(AUTH_KEY, creds)
+    return tokens.access_token
+  } catch (err) {
+    deps.logger.error('OAuth refresh failed', {
+      message: (err as Error).message,
+    })
+    cache.creds = null
+    return null
+  }
+}
+
 async function resolveAccessToken(
   deps: MessagesDeps,
+  cache: TokenCache,
 ): Promise<string | null> {
+  const effectiveNow = deps.clock.now() + TOKEN_EXPIRY_BUFFER_MS
+
+  if (cache.creds) {
+    const cached = decideTokenAction(cache.creds, effectiveNow)
+    if (cached.kind === 'valid') return cached.accessToken
+  }
+  if (cache.refreshing) return cache.refreshing
+
   const credentials = await deps.credentialStore.get(AUTH_KEY)
-  const decision = decideTokenAction(credentials, deps.clock.now())
+  const decision = decideTokenAction(credentials, effectiveNow)
   switch (decision.kind) {
     case 'valid':
+      cache.creds = credentials
       return decision.accessToken
     case 'needs-refresh': {
-      try {
-        const tokens = await deps.oauth.refreshToken(decision.refreshToken)
-        const expires = deps.clock.now() + tokens.expires_in * 1000
-        await deps.credentialStore.set(AUTH_KEY, {
-          type: 'oauth',
-          refresh: tokens.refresh_token,
-          access: tokens.access_token,
-          expires,
-        })
-        return tokens.access_token
-      } catch (err) {
-        deps.logger.error('OAuth refresh failed', {
-          message: (err as Error).message,
-        })
-        return null
+      // Another request may have started a refresh while we awaited the store.
+      if (!cache.refreshing) {
+        cache.refreshing = doRefresh(deps, cache, decision.refreshToken).finally(
+          () => {
+            cache.refreshing = null
+          },
+        )
       }
+      return cache.refreshing
     }
     case 'expired-no-refresh':
     case 'missing':
@@ -140,7 +302,13 @@ async function resolveAccessToken(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Route
+// ---------------------------------------------------------------------------
+
 export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
+  const tokenCache: TokenCache = { creds: null, refreshing: null }
+
   const handler = async (c: Context) => {
     const body = (await c.req.json()) as AnthropicRequestBody
     const isStreaming = body.stream === true
@@ -160,11 +328,11 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
     }
 
     try {
-      await normalizeModelInBody(body, deps.anthropic, deps.logger)
-
-      const { transformToOpenAIFormat } = transformRequest(body)
-
-      const oauthToken = await resolveAccessToken(deps)
+      // Independent lookups; run them concurrently.
+      const [, oauthToken] = await Promise.all([
+        normalizeModelInBody(body, deps.anthropic, deps.logger),
+        resolveAccessToken(deps, tokenCache),
+      ])
       if (!oauthToken) {
         return c.json<ErrorResponse>(
           {
@@ -176,10 +344,14 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
         )
       }
 
-      const upstream = await deps.anthropic.sendMessages({
+      const { transformToOpenAIFormat } = transformRequest(body)
+
+      const upstream = await sendMessagesWithRetry(deps, {
         body,
         accessToken: oauthToken,
         streaming: isStreaming,
+        // Propagate client disconnects so cancelled requests die upstream too.
+        signal: c.req.raw.signal,
       })
 
       if (!upstream.ok) {
@@ -188,6 +360,8 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
           text: upstream.errorText,
         })
         if (upstream.status === 401) {
+          // The stored/cached token is bad; force a store re-read next time.
+          tokenCache.creds = null
           return c.json<ErrorResponse>(
             {
               error: 'Authentication failed',
@@ -205,16 +379,7 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
       }
 
       if (isStreaming) {
-        for (const [key, value] of Object.entries(upstream.headers)) {
-          if (
-            key === 'content-encoding' ||
-            key === 'content-length' ||
-            key === 'transfer-encoding'
-          ) {
-            continue
-          }
-          c.header(key, value)
-        }
+        copyUpstreamHeaders(c, upstream.headers)
 
         const upstreamBody = upstream.body
         if (!upstreamBody) {
@@ -229,9 +394,15 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
 
         return stream(c, async (writer) => {
           const converterState = createConverterState()
+          writer.onAbort(() => {
+            reader.cancel().catch(() => {})
+          })
           try {
             while (true) {
-              const { done, value } = await reader.read()
+              const { done, value } = await readWithIdleTimeout(
+                reader,
+                STREAM_IDLE_TIMEOUT_MS,
+              )
               if (done) break
               const chunk = decoder.decode(value, { stream: true })
 
@@ -268,18 +439,40 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
             deps.logger.error('stream error', {
               message: (err as Error).message,
             })
+            // Surface the failure to the client instead of silently closing
+            // the connection — IDEs render a silent close as an endless
+            // spinner.
+            const message = `Proxy stream error: ${(err as Error).message}`
+            try {
+              if (transformToOpenAIFormat) {
+                await writer.write(
+                  `data: ${JSON.stringify({
+                    error: { message, type: 'proxy_stream_error' },
+                  })}\n\n`,
+                )
+                await writer.write('data: [DONE]\n\n')
+              } else {
+                await writer.write(
+                  `event: error\ndata: ${JSON.stringify({
+                    type: 'error',
+                    error: { type: 'proxy_stream_error', message },
+                  })}\n\n`,
+                )
+              }
+            } catch {
+              // client already gone
+            }
           } finally {
-            reader.releaseLock()
+            // cancel() (not just releaseLock) so the upstream request is torn
+            // down and stops consuming rate limit.
+            reader.cancel().catch(() => {})
           }
         })
       }
 
       // Non-streaming branch.
       const responseData = upstream.json as AnthropicResponse
-      for (const [key, value] of Object.entries(upstream.headers)) {
-        if (key === 'content-encoding') continue
-        c.header(key, value)
-      }
+      copyUpstreamHeaders(c, upstream.headers)
 
       if (transformToOpenAIFormat) {
         return c.json(convertNonStreamingResponse(responseData))

@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-10
+
+### Added
+
+- **cloudflared tunnel support**: `--tunnel` now accepts a provider (`--tunnel cloudflared` / `--tunnel ngrok`). Bare `--tunnel` auto-selects cloudflared when installed (no account, no authtoken, no one-tunnel limit, no interstitial page) and falls back to ngrok. The cloudflared adapter waits for the tunnel's edge registration *and* for the `*.trycloudflare.com` hostname to actually resolve (checked via DNS-over-HTTPS) before reporting the URL — quick-tunnel DNS records take a few seconds to propagate and NXDOMAIN is negatively cached for 30 minutes, so a premature lookup used to break the tunnel for half an hour.
+
+### Fixed
+
+- **Chat requests no longer block on models.dev.** The model-catalog refresh is now stale-while-revalidate with single-flight and a 60s negative cache, and the fetch itself has a 3s timeout. Previously every cache expiry (5 min) and every cold start awaited an untimed fetch to models.dev on the request path — a slow or hung models.dev stalled chats for minutes.
+- **Upstream deadlines and retries.** The Anthropic request now has a 30s response-headers timeout, streaming reads have a 90s idle watchdog, and transient failures (network errors, 408/429/5xx/529) are retried up to twice with backoff before any bytes reach the client.
+- **Stale `content-length` no longer forwarded on non-streaming responses.** The proxy re-serializes a transformed body, so copying the upstream `content-length`/`transfer-encoding` headers could make clients hang waiting for bytes that never arrive.
+- **Client disconnects propagate upstream.** Cancelling a request in the IDE now aborts the upstream Anthropic call instead of leaving it streaming into the void (burning rate limit and stacking connections on retries).
+- **Single-flight OAuth refresh with a 30s pre-expiry buffer.** Concurrent requests at token expiry previously raced `refreshToken`; since Anthropic rotates refresh tokens, the losers could invalidate the stored credentials and force a manual re-login. Tokens are also cached in memory now, removing the credential-store round-trip (an HTTPS call on Upstash, a disk read locally) from every request.
+- **Mid-stream failures are surfaced to the client** as an error SSE event plus `[DONE]` instead of a silent connection close that IDEs render as an endless spinner.
+
+[1.3.0]: https://github.com/maker-jr/cursor-claude/releases/tag/v1.3.0
+
 ## [1.2.2] - 2026-07-08
 
 ### Fixed

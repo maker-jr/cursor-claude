@@ -1,6 +1,7 @@
 import { ChildProcess, spawn } from 'node:child_process'
 import { TunnelError } from '../../domain/errors'
 import type { TunnelHandle } from '../../ports/tunnel'
+import { binaryWorks, sleep, stopChild } from './process-utils'
 import { findFreePort, isPortFree } from './port'
 
 interface NgrokTunnelsResponse {
@@ -71,6 +72,7 @@ export async function startNgrokTunnel(
     const publicUrl = await waitForPublicUrl(apiPort, child, () => earlyExitErr)
     return {
       publicUrl,
+      provider: 'ngrok',
       stop: () => stopChild(child),
     }
   } catch (err) {
@@ -111,16 +113,7 @@ async function detectRunningNgrok(): Promise<ExistingNgrok | null> {
 }
 
 async function ensureNgrokInstalled(): Promise<void> {
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const probe = spawn('ngrok', ['version'], { stdio: 'ignore' })
-      probe.once('error', reject)
-      probe.once('exit', (code) => {
-        if (code === 0) resolve()
-        else reject(new Error(`ngrok exited ${code}`))
-      })
-    })
-  } catch {
+  if (!(await binaryWorks('ngrok', ['version']))) {
     throw new TunnelError(
       'ngrok is not installed or not on PATH.\n' +
         '  Install it with:  brew install ngrok/ngrok/ngrok\n' +
@@ -167,33 +160,6 @@ async function waitForPublicUrl(
   throw new TunnelError(
     `Timed out waiting for ngrok to expose a public HTTPS URL after ${timeoutMs}ms.`,
   )
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function stopChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode != null || child.signalCode != null) return
-  return new Promise<void>((resolve) => {
-    const done = () => resolve()
-    child.once('exit', done)
-    try {
-      child.kill('SIGTERM')
-    } catch {
-      resolve()
-      return
-    }
-    setTimeout(() => {
-      if (child.exitCode == null && child.signalCode == null) {
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          // ignore
-        }
-      }
-    }, 2000)
-  })
 }
 
 export { TunnelError }

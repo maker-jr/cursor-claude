@@ -12,7 +12,7 @@ import {
 } from '../../adapters/storage/paths'
 import { findFreePort, isPortFree } from '../../adapters/tunnel/port'
 import type { Deps } from '../../ports'
-import type { TunnelHandle } from '../../ports/tunnel'
+import type { TunnelChoice, TunnelHandle } from '../../ports/tunnel'
 import { getStorageKind } from '../composition'
 
 const AUTH_KEY = 'auth:anthropic'
@@ -22,7 +22,8 @@ export interface StartOptions {
   port?: number
   autoPort: boolean
   detach: boolean
-  tunnel: boolean
+  // false = no tunnel; 'auto' = cloudflared if installed, else ngrok.
+  tunnel: false | TunnelChoice
   apiKey?: string
 }
 
@@ -90,7 +91,7 @@ async function runInForeground(
   deps: Deps,
   port: number,
   apiKey: ResolvedApiKey,
-  useTunnel: boolean,
+  useTunnel: false | TunnelChoice,
 ): Promise<void> {
   process.env.PORT = String(port)
 
@@ -110,9 +111,9 @@ async function runInForeground(
   const server = serve({ fetch: app.fetch, port }, async () => {
     let tunnel: TunnelHandle | null = null
     if (useTunnel) {
-      tunnel = await tryStartTunnel(deps, port)
+      tunnel = await tryStartTunnel(deps, port, useTunnel)
     }
-    printBanner(port, apiKey, tunnel?.publicUrl ?? null)
+    printBanner(port, apiKey, tunnel)
 
     const shutdown = () => {
       if (tunnel) {
@@ -140,14 +141,21 @@ async function runInForeground(
 async function tryStartTunnel(
   deps: Deps,
   port: number,
+  choice: TunnelChoice,
 ): Promise<TunnelHandle | null> {
-  console.log(pc.dim('Starting ngrok tunnel...'))
+  console.log(
+    pc.dim(
+      choice === 'auto'
+        ? 'Starting tunnel (cloudflared if installed, else ngrok)...'
+        : `Starting ${choice} tunnel...`,
+    ),
+  )
   try {
-    return await deps.makeTunnel(port)
+    return await deps.makeTunnel(port, choice)
   } catch (err) {
     if (err instanceof TunnelError) {
       console.error()
-      console.error(pc.red('✗ Failed to start ngrok tunnel:'))
+      console.error(pc.red('✗ Failed to start tunnel:'))
       console.error(indent(err.message, '  '))
       console.error()
       console.error(
@@ -165,7 +173,7 @@ async function tryStartTunnel(
 async function launchDetached(
   port: number,
   apiKey: ResolvedApiKey,
-  useTunnel: boolean,
+  useTunnel: false | TunnelChoice,
 ): Promise<void> {
   const logPath = getLogFilePath()
   const pidPath = getPidFilePath()
@@ -253,18 +261,23 @@ function isProcessAlive(pid: number): boolean {
 function printBanner(
   port: number,
   apiKey: ResolvedApiKey,
-  publicUrl: string | null,
+  tunnel: TunnelHandle | null,
 ): void {
   const localUrl = `http://localhost:${port}`
   const storeKind = getStorageKind()
+  const publicUrl = tunnel?.publicUrl ?? null
   const cursorUrl = publicUrl ? `${publicUrl}/v1` : `${localUrl}/v1`
 
   console.log()
   console.log(pc.bold(pc.green('cursor-claude')) + pc.dim(' is running'))
   console.log()
   console.log('  Local URL:   ' + pc.cyan(localUrl))
-  if (publicUrl) {
-    console.log('  Public URL:  ' + pc.cyan(publicUrl) + pc.dim(' (ngrok)'))
+  if (tunnel) {
+    console.log(
+      '  Public URL:  ' +
+        pc.cyan(tunnel.publicUrl) +
+        pc.dim(` (${tunnel.provider})`),
+    )
   }
   console.log()
 
@@ -287,7 +300,13 @@ function printBanner(
     console.log(
       '  ' +
         pc.yellow('Note for Cursor: ') +
-        pc.dim('Cursor requires a public HTTPS URL. Re-run with ') +
+        pc.dim(
+          'Cursor sends requests from its own servers, so localhost URLs fail with',
+        ),
+    )
+    console.log(
+      '  ' +
+        pc.dim('"Access to private networks is forbidden". Re-run with ') +
         pc.bold('--tunnel') +
         pc.dim(' (or use a remote deploy).'),
     )

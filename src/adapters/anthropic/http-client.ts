@@ -12,6 +12,47 @@ import type {
 const MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 const DEFAULT_MODELS_URL = 'https://models.dev/api.json'
 
+// Deadline for the upstream to return response *headers*. Body streaming is
+// not bounded by this — only the connect/first-response phase, which is where
+// a dead connection would otherwise hang a chat forever.
+const HEADERS_TIMEOUT_MS = 30_000
+// models.dev is a nice-to-have catalog; never let it stall anything for long.
+const MODELS_TIMEOUT_MS = 3_000
+
+interface LinkedAbort {
+  signal: AbortSignal
+  // Call once response headers arrive: disarms the timeout while leaving the
+  // caller-signal link intact so client disconnects still cancel the body.
+  headersReceived: () => void
+}
+
+function withHeadersTimeout(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): LinkedAbort {
+  const controller = new AbortController()
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      controller.abort(callerSignal.reason)
+    } else {
+      callerSignal.addEventListener(
+        'abort',
+        () => controller.abort(callerSignal.reason),
+        { once: true },
+      )
+    }
+  }
+  const timer = setTimeout(() => {
+    controller.abort(
+      new Error(`upstream did not respond within ${timeoutMs}ms`),
+    )
+  }, timeoutMs)
+  return {
+    signal: controller.signal,
+    headersReceived: () => clearTimeout(timer),
+  }
+}
+
 // Test/dev seam: lets the CLI tests point the adapter at a local fixture
 // server instead of hitting models.dev. Production users never set this.
 function modelsUrl(): string {
@@ -42,12 +83,18 @@ export function createHttpAnthropicClient(): AnthropicClient {
         'accept-encoding': 'gzip, deflate',
       }
 
-      const res = await fetch(MESSAGES_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(opts.body),
-        signal: opts.signal,
-      })
+      const link = withHeadersTimeout(opts.signal, HEADERS_TIMEOUT_MS)
+      let res: Response
+      try {
+        res = await fetch(MESSAGES_URL, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(opts.body),
+          signal: link.signal,
+        })
+      } finally {
+        link.headersReceived()
+      }
 
       if (!res.ok) {
         const errorText = await res.text()
@@ -86,6 +133,7 @@ export function createHttpAnthropicClient(): AnthropicClient {
           accept: 'application/json',
           'user-agent': USER_AGENT,
         },
+        signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
       })
       if (!res.ok) {
         const text = await res.text()
