@@ -14,13 +14,21 @@ describe('isAdaptiveThinkingModel', () => {
     'claude-sonnet-4-6-20251101',
     'claude-opus-4-7',
     'claude-opus-4-7-20260101',
+    'claude-opus-4-8',
     'claude-mythos-4-7',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-fable-5-1',
+    'claude-haiku-4-6',
+    // Unknown/future ids must default to adaptive: budget_tokens is a 400
+    // on everything after the 4.5 generation.
+    'claude-opus-6',
   ]
   const legacyModels = [
     'claude-sonnet-4-5',
     'claude-opus-4-5',
     'claude-haiku-4-5',
-    'claude-haiku-4-6',
+    'claude-3-opus',
   ]
 
   for (const id of adaptiveModels) {
@@ -93,6 +101,17 @@ describe('applyThinkingAndEffort — 4.6 / 4.7 models', () => {
     expect(body.thinking).toEqual({ type: 'adaptive' })
     expect(body.output_config).toEqual({ effort: 'max' })
   })
+
+  it('sets adaptive thinking + effort for opus-5 (never budget_tokens)', () => {
+    const body = makeBody({ model: 'claude-opus-5' })
+    applyThinkingAndEffort(body, {
+      canonicalId: 'claude-opus-5',
+      thinking: true,
+      effort: 'high',
+    })
+    expect(body.thinking).toEqual({ type: 'adaptive' })
+    expect(body.output_config).toEqual({ effort: 'high' })
+  })
 })
 
 describe('applyThinkingAndEffort — 4.5 / older models', () => {
@@ -115,7 +134,9 @@ describe('applyThinkingAndEffort — 4.5 / older models', () => {
       effort: 'low',
     })
     expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 4_000 })
-    expect(body.output_config).toEqual({ effort: 'low' })
+    // effort is folded into budget_tokens; output_config.effort is rejected
+    // on the legacy budget generation.
+    expect(body.output_config).toBeUndefined()
   })
 
   it('maps medium effort to budget_tokens=8000', () => {
@@ -146,7 +167,7 @@ describe('applyThinkingAndEffort — 4.5 / older models', () => {
       effort: 'xhigh',
     })
     expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 32_000 })
-    expect(body.output_config).toEqual({ effort: 'xhigh' })
+    expect(body.output_config).toBeUndefined()
   })
 
   it('maps max effort to budget_tokens=64000', () => {
@@ -157,7 +178,7 @@ describe('applyThinkingAndEffort — 4.5 / older models', () => {
       effort: 'max',
     })
     expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 64_000 })
-    expect(body.output_config).toEqual({ effort: 'max' })
+    expect(body.output_config).toBeUndefined()
   })
 })
 

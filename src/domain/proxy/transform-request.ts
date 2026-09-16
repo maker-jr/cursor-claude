@@ -1,6 +1,8 @@
 import {
   CLAUDE_CODE_SYSTEM_MARKER,
   OPENAI_ONLY_BODY_KEYS,
+  SAMPLING_BODY_KEYS,
+  allowsSamplingParams,
   defaultMaxTokensForModel,
 } from './policies'
 import type { AnthropicRequestBody } from './types'
@@ -30,6 +32,14 @@ export interface TransformRequestResult {
 // touch I/O or globals.
 export function transformRequest(body: AnthropicRequestBody): TransformRequestResult {
   stripOpenAiOnlyFields(body as unknown as Record<string, unknown>)
+
+  // Applies to every caller (including native claude-code): these params are
+  // a hard 400 on models that removed them, so forwarding is never useful.
+  if (!allowsSamplingParams(body.model)) {
+    for (const key of SAMPLING_BODY_KEYS) {
+      delete (body as unknown as Record<string, unknown>)[key]
+    }
+  }
 
   const alreadyClaudeCode = Boolean(
     body.system?.[0]?.text?.includes(CLAUDE_CODE_SYSTEM_MARKER),

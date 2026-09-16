@@ -326,3 +326,69 @@ describe('parseModelName — inverted word order', () => {
     })
   })
 })
+
+describe('parseModelName — uncataloged model fallback', () => {
+  it('strips thinking+effort from a model no catalog knows (the day-one 404 bug)', () => {
+    expect(parse('claude-opus-5-thinking-high', [])).toEqual({
+      canonicalId: 'claude-opus-5',
+      thinking: true,
+      effort: 'high',
+      unknownSuffix: [],
+    })
+  })
+
+  it('strips a bare thinking suffix', () => {
+    expect(parse('claude-sonnet-6-thinking', [])).toEqual({
+      canonicalId: 'claude-sonnet-6',
+      thinking: true,
+      effort: null,
+      unknownSuffix: [],
+    })
+  })
+
+  it('strips a bare effort suffix', () => {
+    expect(parse('claude-opus-5-max', [])).toEqual({
+      canonicalId: 'claude-opus-5',
+      thinking: false,
+      effort: 'max',
+      unknownSuffix: [],
+    })
+  })
+
+  it('passes through an uncataloged id with no metadata suffix', () => {
+    expect(parse('claude-fable-5-1', [])).toBeNull()
+  })
+
+  it('does not strip past a non-metadata token', () => {
+    expect(parse('claude-opus-5-20260401-thinking', [])).toEqual({
+      canonicalId: 'claude-opus-5-20260401',
+      thinking: true,
+      effort: null,
+      unknownSuffix: [],
+    })
+  })
+
+  it('never applies to non-Claude names', () => {
+    expect(parse('gpt-5-thinking', [])).toBeNull()
+  })
+})
+
+describe('STATIC_FALLBACK_IDS — Claude 5 family', () => {
+  it('resolves claude-opus-5-thinking-high via the static fallback catalog', () => {
+    expect(parse('claude-opus-5-thinking-high', STATIC_FALLBACK_IDS)).toEqual({
+      canonicalId: 'claude-opus-5',
+      thinking: true,
+      effort: 'high',
+      unknownSuffix: [],
+    })
+  })
+
+  it('matches claude-fable-5-1 exactly, not as claude-fable-5 + suffix', () => {
+    expect(parse('claude-fable-5-1', STATIC_FALLBACK_IDS)).toEqual({
+      canonicalId: 'claude-fable-5-1',
+      thinking: false,
+      effort: null,
+      unknownSuffix: [],
+    })
+  })
+})

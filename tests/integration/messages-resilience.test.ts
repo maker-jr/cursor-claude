@@ -356,4 +356,25 @@ describe('model-id catalog resilience', () => {
     // The failure is negatively cached: no per-request refetch storm.
     expect(anthropic.modelsCalls).toBe(1)
   })
+
+  it('normalizes a Claude 5 model with suffixes into a valid upstream request', async () => {
+    const anthropic = scriptedClient({
+      fetchModels: () => {
+        throw new Error('models.dev unreachable')
+      },
+    })
+    const app = makeApp({ anthropic })
+
+    const res = await app.fetch(
+      chatRequest({ model: 'claude-opus-5-thinking-high', temperature: 0.7 }),
+    )
+    expect(res.status).toBe(200)
+
+    const sent = anthropic.sendCalls[0].body as Record<string, unknown>
+    expect(sent.model).toBe('claude-opus-5')
+    // budget_tokens and temperature are hard 400s on claude-opus-5.
+    expect(sent.thinking).toEqual({ type: 'adaptive' })
+    expect(sent.output_config).toEqual({ effort: 'high' })
+    expect(sent.temperature).toBeUndefined()
+  })
 })

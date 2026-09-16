@@ -38,6 +38,11 @@ const EFFORT_LEVELS = new Set<string>(['low', 'medium', 'high', 'xhigh', 'max'])
  * supersedes it when available.
  */
 export const STATIC_FALLBACK_IDS: readonly string[] = [
+  'claude-fable-5-1',
+  'claude-fable-5',
+  'claude-opus-5',
+  'claude-sonnet-5',
+  'claude-opus-4-8',
   'claude-opus-4-6',
   'claude-opus-4-5',
   'claude-sonnet-4-6',
@@ -77,7 +82,7 @@ export function normalizeDotVersions(input: string): string {
  * Known Claude model family names (the word between "claude-" and the version).
  * Used to detect and fix inverted word-order like "claude-4-6-sonnet".
  */
-const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'mythos'] as const
+const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'mythos', 'fable'] as const
 
 /**
  * Normalise inverted word-order in Cursor model names.
@@ -145,7 +150,7 @@ export function parseModelName(
     }
   }
 
-  if (canonicalId === null) return null
+  if (canonicalId === null) return parseUncataloged(normalised)
 
   const tokens = remainder.length > 0 ? remainder.split('-') : []
   let thinking = false
@@ -163,4 +168,36 @@ export function parseModelName(
   }
 
   return { canonicalId, thinking, effort, unknownSuffix }
+}
+
+/**
+ * Fallback for a Claude model id the catalog doesn't know — typically a model
+ * newer than both models.dev and STATIC_FALLBACK_IDS. Without this, a name
+ * like "claude-opus-5-thinking-high" was forwarded verbatim on the day a new
+ * model shipped and Anthropic 404'd it.
+ *
+ * Strips recognized metadata tokens ("thinking", effort levels) off the tail
+ * only — no real Anthropic model id ends in one of those. Stops at the first
+ * unrecognized token; if nothing was stripped, returns null so the name is
+ * passed through untouched.
+ */
+function parseUncataloged(normalised: string): ParsedModelName | null {
+  if (!normalised.startsWith('claude-')) return null
+  const tokens = normalised.split('-')
+  let thinking = false
+  let effort: EffortLevel | null = null
+  while (tokens.length > 2) {
+    const last = tokens[tokens.length - 1]
+    if (last === 'thinking') {
+      thinking = true
+      tokens.pop()
+    } else if (EFFORT_LEVELS.has(last)) {
+      if (effort === null) effort = last as EffortLevel
+      tokens.pop()
+    } else {
+      break
+    }
+  }
+  if (!thinking && effort === null) return null
+  return { canonicalId: tokens.join('-'), thinking, effort, unknownSuffix: [] }
 }

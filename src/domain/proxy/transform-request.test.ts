@@ -109,3 +109,30 @@ describe('transformRequest', () => {
     expect(result.transformToOpenAIFormat).toBe(false)
   })
 })
+
+describe('sampling param stripping', () => {
+  it('strips temperature/top_p/top_k for models that reject them (opus-5)', () => {
+    const body = {
+      model: 'claude-opus-5',
+      messages: [{ role: 'user', content: 'hi' }],
+      temperature: 0.7,
+      top_p: 0.9,
+      top_k: 40,
+    } as unknown as Parameters<typeof transformRequest>[0]
+    transformRequest(body)
+    const raw = body as unknown as Record<string, unknown>
+    expect(raw.temperature).toBeUndefined()
+    expect(raw.top_p).toBeUndefined()
+    expect(raw.top_k).toBeUndefined()
+  })
+
+  it('keeps temperature on the 4.6 generation where it is still valid', () => {
+    const body = {
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'hi' }],
+      temperature: 0.7,
+    } as unknown as Parameters<typeof transformRequest>[0]
+    transformRequest(body)
+    expect((body as unknown as Record<string, unknown>).temperature).toBe(0.7)
+  })
+})

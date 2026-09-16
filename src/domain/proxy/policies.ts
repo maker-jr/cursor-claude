@@ -18,6 +18,23 @@ export const OPENAI_ONLY_BODY_KEYS = [
   'web_search_options',
 ] as const
 
+// Sampling params were removed on Opus 4.7+ and the entire Claude 5 family —
+// sending temperature/top_p/top_k there returns a 400 (Cursor sends
+// temperature by default). They remain valid on the 4.6 generation and older,
+// so allow only positively-recognized old ids and strip for anything newer or
+// unknown.
+export function allowsSamplingParams(model: string): boolean {
+  return (
+    model.includes('claude-3') ||
+    model.includes('-4-0') ||
+    model.includes('-4-1') ||
+    model.includes('-4-5') ||
+    model.includes('-4-6')
+  )
+}
+
+export const SAMPLING_BODY_KEYS = ['temperature', 'top_p', 'top_k'] as const
+
 export const CLAUDE_CODE_SYSTEM_MARKER =
   "You are Claude Code, Anthropic's official CLI for Claude."
 

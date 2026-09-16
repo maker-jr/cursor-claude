@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-09-16
+
+### Fixed
+
+- **Claude 5 family models work** (`claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`, ...). Three independent 4xx sources fixed:
+  - The model-name catalog didn't know the Claude 5 ids, so suffixed names like `claude-opus-5-thinking-high` were forwarded verbatim and Anthropic returned `404 not_found_error`. The static fallback catalog now includes the Claude 5 family (and `claude-opus-4-8`), and — so this never recurs on day one of a future model — an uncataloged `claude-*` name now gets its recognized metadata tokens (`thinking`, effort levels) stripped off the tail even when no catalog lists it.
+  - Thinking suffixes on 4.7+ / Claude 5 models would have injected `thinking: {type: "enabled", budget_tokens: N}`, which those models reject with a 400 (`budget_tokens` was removed). The generation logic is inverted: only the 4.5-and-older generation gets `budget_tokens`; everything newer or unknown gets `thinking: {type: "adaptive"}`. `output_config.effort` is likewise no longer sent to the legacy generation, which rejects it.
+  - `temperature`/`top_p`/`top_k` (Cursor sends `temperature` by default) are stripped for Opus 4.7+ and the Claude 5 family, where sampling params were removed and return a 400.
+- The inverted word-order normalizer now recognizes the `fable` family name.
+
+[1.4.2]: https://github.com/maker-jr/cursor-claude/releases/tag/v1.4.2
+
 ## [1.4.1] - 2026-09-16
 
 ### Fixed
