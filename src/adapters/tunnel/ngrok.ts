@@ -112,8 +112,12 @@ async function detectRunningNgrok(): Promise<ExistingNgrok | null> {
   }
 }
 
+export function isNgrokInstalled(): Promise<boolean> {
+  return binaryWorks('ngrok', ['version'])
+}
+
 async function ensureNgrokInstalled(): Promise<void> {
-  if (!(await binaryWorks('ngrok', ['version']))) {
+  if (!(await isNgrokInstalled())) {
     throw new TunnelError(
       'ngrok is not installed or not on PATH.\n' +
         '  Install it with:  brew install ngrok/ngrok/ngrok\n' +

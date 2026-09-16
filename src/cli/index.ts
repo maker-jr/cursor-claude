@@ -64,7 +64,7 @@ program
   .option(
     '-t, --tunnel [provider]',
     'expose the proxy via a public HTTPS tunnel (required for Cursor). ' +
-      'Provider: cloudflared | ngrok. Default: cloudflared if installed, else ngrok.',
+      'Provider: ngrok | cloudflared. Default: ngrok if installed, else cloudflared.',
     parseTunnelProvider,
   )
   .option(

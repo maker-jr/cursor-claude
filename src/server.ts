@@ -6,6 +6,7 @@ import { consoleLogger } from './adapters/process/console-logger'
 import { systemClock } from './adapters/process/system-clock'
 import { getCredentialStore } from './adapters/storage/create-credential-store'
 import { createApp } from './http/app'
+import { enableHappyEyeballs, tuneHttpServer } from './http/tune-server'
 
 // Build a default production app. Kept as a module default export so
 // `api/index.ts` (Vercel) and `node dist/server.js` both keep working without
@@ -26,6 +27,7 @@ const port = Number(process.env.PORT) || 9095
 // Start HTTP server when running locally (`node dist/server.js`), not when
 // bundled as a Vercel handler.
 if (require.main === module) {
+  enableHappyEyeballs()
   const server = serve(
     {
       fetch: app.fetch,
@@ -36,6 +38,7 @@ if (require.main === module) {
       console.log(`Listening on http://localhost:${addr}`)
     },
   )
+  tuneHttpServer(server)
 
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {

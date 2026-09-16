@@ -6,7 +6,7 @@ export interface TunnelHandle {
   stop: () => Promise<void>
 }
 
-// 'auto' picks cloudflared when installed (faster, no agent limit), else ngrok.
+// 'auto' prefers ngrok (stable long-lived streams), falling back to cloudflared.
 export type TunnelChoice = TunnelProvider | 'auto'
 
 export type TunnelFactory = (

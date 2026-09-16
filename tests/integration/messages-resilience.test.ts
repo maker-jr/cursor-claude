@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../src/http/app'
 import { resetModelIdCache } from '../../src/http/routes/messages'
 import type {
@@ -257,6 +257,81 @@ describe('mid-stream failures', () => {
     expect(text).toContain('Hel')
     expect(text).toContain('proxy_stream_error')
     expect(text).toContain('data: [DONE]')
+  })
+})
+
+describe('stream keepalive', () => {
+  it('emits SSE comment heartbeats while the upstream is silent', async () => {
+    vi.useFakeTimers()
+    try {
+      const encoder = new TextEncoder()
+      let releaseRest: () => void = () => {}
+      const restGate = new Promise<void>((resolve) => {
+        releaseRest = resolve
+      })
+      let pullCount = 0
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          pullCount++
+          if (pullCount === 1) {
+            controller.enqueue(
+              encoder.encode(
+                'data: {"type":"message_start","message":{"id":"msg_x","model":"claude-sonnet-4-5","usage":{"input_tokens":1,"output_tokens":0}}}\n\n' +
+                  'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}\n\n',
+              ),
+            )
+          } else if (pullCount === 2) {
+            // Simulate a long thinking pause: nothing arrives until released.
+            await restGate
+            controller.enqueue(
+              encoder.encode('data: {"type":"message_stop"}\n\n'),
+            )
+          } else {
+            controller.close()
+          }
+        },
+      })
+      const anthropic = scriptedClient({
+        responses: [
+          {
+            ok: true,
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' },
+            body,
+          },
+        ],
+      })
+      const app = makeApp({ anthropic })
+      const res = await app.fetch(chatRequest({ stream: true }))
+      expect(res.status).toBe(200)
+
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let received = ''
+      while (!received.includes('Hel')) {
+        const { done, value } = await reader.read()
+        if (done) break
+        received += decoder.decode(value, { stream: true })
+      }
+
+      // Upstream is now silent; after >15s of fake time a heartbeat must
+      // reach the client so tunnels don't declare the connection idle.
+      const pendingRead = reader.read()
+      await vi.advanceTimersByTimeAsync(20_000)
+      const { value } = await pendingRead
+      received += decoder.decode(value, { stream: true })
+      expect(received).toContain(': keepalive')
+
+      releaseRest()
+      while (true) {
+        const { done, value: chunk } = await reader.read()
+        if (done) break
+        received += decoder.decode(chunk, { stream: true })
+      }
+      expect(received).toContain('data: [DONE]')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

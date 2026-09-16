@@ -134,6 +134,13 @@ const RETRY_DELAYS_MS = [300, 1200]
 // Anthropic sends SSE pings every few seconds; a stream this quiet is dead.
 const STREAM_IDLE_TIMEOUT_MS = 90_000
 
+// Anthropic's pings are consumed by the OpenAI conversion (they have no
+// OpenAI equivalent), so during long thinking / tool-argument pauses the
+// client-facing stream goes silent. Tunnels and Cursor's backend treat a
+// silent stream as idle and drop it — the SSE comment heartbeat below keeps
+// the connection visibly alive; every SSE parser ignores comment lines.
+const CLIENT_HEARTBEAT_MS = 15_000
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -380,6 +387,13 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
 
       if (isStreaming) {
         copyUpstreamHeaders(c, upstream.headers)
+        // Explicit SSE headers, overriding anything copied from upstream:
+        // `no-transform` and `x-accel-buffering: no` tell tunnels and reverse
+        // proxies not to buffer or compress the stream — buffering is exactly
+        // what turns a live stream into a long stall followed by a drop.
+        c.header('content-type', 'text/event-stream; charset=utf-8')
+        c.header('cache-control', 'no-cache, no-transform')
+        c.header('x-accel-buffering', 'no')
 
         const upstreamBody = upstream.body
         if (!upstreamBody) {
@@ -397,6 +411,27 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
           writer.onAbort(() => {
             reader.cancel().catch(() => {})
           })
+
+          let lastWriteAt = Date.now()
+          // In passthrough mode a forwarded chunk can end mid-SSE-frame; a
+          // heartbeat comment is only safe to interleave at a frame boundary.
+          let atFrameBoundary = true
+          const send = async (payload: string, endsFrame = true) => {
+            lastWriteAt = Date.now()
+            atFrameBoundary = endsFrame
+            await writer.write(payload)
+          }
+          const heartbeat = setInterval(() => {
+            if (
+              !atFrameBoundary ||
+              Date.now() - lastWriteAt < CLIENT_HEARTBEAT_MS
+            ) {
+              return
+            }
+            lastWriteAt = Date.now()
+            writer.write(': keepalive\n\n').catch(() => {})
+          }, CLIENT_HEARTBEAT_MS / 3)
+
           try {
             while (true) {
               const { done, value } = await readWithIdleTimeout(
@@ -410,15 +445,13 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
                 const results = processChunk(converterState, chunk)
                 for (const result of results) {
                   if (result.type === 'chunk' && result.data) {
-                    await writer.write(
-                      `data: ${JSON.stringify(result.data)}\n\n`,
-                    )
+                    await send(`data: ${JSON.stringify(result.data)}\n\n`)
                   } else if (result.type === 'done') {
-                    await writer.write('data: [DONE]\n\n')
+                    await send('data: [DONE]\n\n')
                   }
                 }
               } else {
-                await writer.write(chunk)
+                await send(chunk, chunk.endsWith('\n'))
               }
             }
 
@@ -429,9 +462,9 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
               const finalResults = flushPendingLine(converterState)
               for (const result of finalResults) {
                 if (result.type === 'chunk' && result.data) {
-                  await writer.write(`data: ${JSON.stringify(result.data)}\n\n`)
+                  await send(`data: ${JSON.stringify(result.data)}\n\n`)
                 } else if (result.type === 'done') {
-                  await writer.write('data: [DONE]\n\n')
+                  await send('data: [DONE]\n\n')
                 }
               }
             }
@@ -463,6 +496,7 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
               // client already gone
             }
           } finally {
+            clearInterval(heartbeat)
             // cancel() (not just releaseLock) so the upstream request is torn
             // down and stops consuming rate limit.
             reader.cancel().catch(() => {})

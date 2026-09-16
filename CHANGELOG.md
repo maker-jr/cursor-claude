@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-16
+
+### Changed
+
+- **ngrok is now the default tunnel provider.** Bare `--tunnel` prefers ngrok when installed and falls back to cloudflared (missing binary *or* a failed ngrok start, e.g. no authtoken or the free-tier one-agent limit). Cloudflare quick tunnels (`*.trycloudflare.com`) are best-effort infrastructure with no SLA and were the main source of dropped long-lived streams; ngrok's edge holds streaming connections reliably. `--tunnel cloudflared` still forces cloudflared.
+
+### Fixed
+
+- **Streams no longer drop during long silent stretches.** Anthropic's SSE `ping` events are consumed by the OpenAI conversion, so during extended thinking or long tool-argument generation the client-facing stream went completely silent — and tunnels/Cursor's backend killed the "idle" connection. The proxy now emits an SSE comment heartbeat (`: keepalive`) after 15s without output (only at SSE frame boundaries, so passthrough streams can't be corrupted).
+- **Streaming responses now send explicit anti-buffering headers** (`Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`), telling tunnels and reverse proxies not to buffer or compress the stream.
+- **Keep-alive connection resets behind tunnels.** Node's HTTP server closes idle keep-alive connections after 5s by default; the tunnel agent pools and reuses connections, so every race lost to that timer surfaced as a reset — random slow or failed requests at the edge. `keepAliveTimeout` is now 120s (with `headersTimeout` at 125s).
+- **Long streams no longer die at 5 minutes.** Node's default `requestTimeout` (300s) could tear down the socket mid-stream; it is now disabled for this single-user proxy.
+- **Faster connections on Node 18 with broken IPv6.** Happy-eyeballs (`net.setDefaultAutoSelectFamily(true)`) is enabled when available, so dual-stack connections to `api.anthropic.com` race IPv6/IPv4 instead of stalling on a dead IPv6 path.
+
+[1.4.0]: https://github.com/maker-jr/cursor-claude/releases/tag/v1.4.0
+
 ## [1.3.0] - 2026-07-10
 
 ### Added

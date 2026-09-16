@@ -12,8 +12,10 @@ const REGISTERED_RE = /Registered tunnel connection/
 /**
  * Start a Cloudflare quick tunnel (trycloudflare.com) to the given local
  * port. Requires the `cloudflared` binary on PATH. No account or authtoken
- * needed, no concurrent-agent limit, and no interstitial page — which makes
- * it both faster and less restricted than free-tier ngrok.
+ * needed, no concurrent-agent limit, and no interstitial page — but quick
+ * tunnels are best-effort infrastructure with no SLA and are noticeably
+ * flakier than ngrok for long-lived SSE streams, which is why 'auto' only
+ * uses this as the fallback provider.
  *
  * The public URL is parsed from cloudflared's log output (it prints the
  * assigned trycloudflare.com URL on startup).

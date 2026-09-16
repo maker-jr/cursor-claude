@@ -33,10 +33,10 @@ Cursor's agent/chat features run inference through Cursor's backend, which then 
 Three ways around this:
 
 1. **`--tunnel`** (easiest). `cursor-claude start --tunnel` boots the proxy and starts a public HTTPS tunnel to it. Two providers are supported:
-   - **cloudflared** (preferred): `brew install cloudflared`. No account, no authtoken, no concurrent-tunnel limit, no interstitial page. Uses Cloudflare quick tunnels (`*.trycloudflare.com`).
-   - **ngrok**: the [ngrok CLI](https://ngrok.com/download) (`brew install ngrok/ngrok/ngrok`) plus an authtoken (`ngrok config add-authtoken <token>` — free tier works).
+   - **ngrok** (preferred): the [ngrok CLI](https://ngrok.com/download) (`brew install ngrok/ngrok/ngrok`) plus an authtoken (`ngrok config add-authtoken <token>` — free tier works). ngrok's edge holds long-lived streaming connections reliably, which matters for agent chats that stream for minutes.
+   - **cloudflared** (fallback): `brew install cloudflared`. No account, no authtoken, no concurrent-tunnel limit, no interstitial page. Uses Cloudflare quick tunnels (`*.trycloudflare.com`) — convenient, but quick tunnels are best-effort infrastructure with no SLA and are noticeably flakier for long-lived streams.
 
-   Bare `--tunnel` picks cloudflared when installed and falls back to ngrok; force one with `--tunnel cloudflared` or `--tunnel ngrok`.
+   Bare `--tunnel` picks ngrok when installed (falling back to cloudflared if ngrok is missing or fails to start); force one with `--tunnel ngrok` or `--tunnel cloudflared`.
 2. **Bring your own tunnel**. If you already have ngrok, Cloudflare Tunnel, Tailscale Funnel, etc. running on some port, just:
    - Run `cursor-claude start --port <that-port>` (no `--tunnel` flag).
    - Configure Cursor with `<your-tunnel-url>/v1` and the API key the CLI printed.
@@ -68,7 +68,7 @@ cursor-claude start              Start the local proxy.
   --no-auto-port                 Fail instead of auto-incrementing a busy port.
   -d, --detach                   Run in the background. Logs to ~/.config/cursor-claude/server.log.
   -t, --tunnel [provider]        Expose the proxy via a public HTTPS tunnel (required for Cursor).
-                                 Provider: cloudflared | ngrok. Default: cloudflared if installed, else ngrok.
+                                 Provider: ngrok | cloudflared. Default: ngrok if installed, else cloudflared.
   -k, --api-key <key>            API key clients must send; persisted for future starts.
                                  If omitted, an existing key is reused, or a new one is generated.
 
@@ -163,7 +163,7 @@ The codebase uses a small hexagonal layout: pure **domain** logic, **port** inte
 2. Tokens are persisted locally (file by default) and refreshed automatically on expiry.
 3. `start` brings up a Hono HTTP server that exposes `/v1/models`, `/v1/chat/completions`, and `/v1/messages`.
 4. Incoming OpenAI-style requests are rewritten to Anthropic's Messages API; responses are streamed back in whichever format the caller asked for.
-5. With `--tunnel`, a cloudflared (or ngrok) subprocess exposes the local port as an HTTPS URL for Cursor to reach.
+5. With `--tunnel`, an ngrok (or cloudflared) subprocess exposes the local port as an HTTPS URL for Cursor to reach.
 
 ## Security
 

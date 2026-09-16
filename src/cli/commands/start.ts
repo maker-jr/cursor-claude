@@ -22,7 +22,7 @@ export interface StartOptions {
   port?: number
   autoPort: boolean
   detach: boolean
-  // false = no tunnel; 'auto' = cloudflared if installed, else ngrok.
+  // false = no tunnel; 'auto' = ngrok if installed, else cloudflared.
   tunnel: false | TunnelChoice
   apiKey?: string
 }
@@ -98,6 +98,11 @@ async function runInForeground(
   // Lazy-load so `--help` / `login` don't pay for the Hono/server bootstrap.
   const { serve } = await import('@hono/node-server')
   const { createApp } = await import('../../http/app')
+  const { tuneHttpServer, enableHappyEyeballs } = await import(
+    '../../http/tune-server'
+  )
+
+  enableHappyEyeballs()
 
   const app = createApp({
     anthropic: deps.anthropic,
@@ -109,6 +114,7 @@ async function runInForeground(
   })
 
   const server = serve({ fetch: app.fetch, port }, async () => {
+    tuneHttpServer(server)
     let tunnel: TunnelHandle | null = null
     if (useTunnel) {
       tunnel = await tryStartTunnel(deps, port, useTunnel)
@@ -146,7 +152,7 @@ async function tryStartTunnel(
   console.log(
     pc.dim(
       choice === 'auto'
-        ? 'Starting tunnel (cloudflared if installed, else ngrok)...'
+        ? 'Starting tunnel (ngrok if installed, else cloudflared)...'
         : `Starting ${choice} tunnel...`,
     ),
   )
