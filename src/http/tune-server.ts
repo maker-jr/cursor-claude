@@ -36,3 +36,68 @@ export function enableHappyEyeballs(): void {
     net.setDefaultAutoSelectFamily(true)
   }
 }
+
+// Socket-level errors that mean "the peer went away", nothing more. These are
+// routine on an unstable network or when the tunnel edge recycles a
+// connection, and must never take the proxy down.
+const CLIENT_DISCONNECT_CODES = new Set([
+  'ECONNRESET',
+  'EPIPE',
+  'ERR_STREAM_PREMATURE_CLOSE',
+])
+
+/** Exported for tests. */
+export function isClientDisconnectError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const code = (err as NodeJS.ErrnoException).code
+  if (code !== undefined && CLIENT_DISCONNECT_CODES.has(code)) return true
+  // Node's http server raises `Error: aborted` when the inbound socket
+  // closes mid-request (abortIncoming in _http_server).
+  return err.message === 'aborted'
+}
+
+/**
+ * Keep the proxy alive through client-side connection drops.
+ *
+ * When the tunnel or Cursor's backend resets its socket mid-request, Node
+ * emits the error asynchronously (`abortIncoming` → `Error: aborted`,
+ * ECONNRESET) with no request context left to attach a handler to — it
+ * surfaces as an uncaught exception and, by default, kills the whole server.
+ * The dropped request itself is unrecoverable (the client retries), but every
+ * other in-flight stream should survive.
+ *
+ * Only recognized disconnect errors are swallowed; anything else preserves
+ * the default crash-loudly behavior.
+ */
+export function installDisconnectGuards(server: unknown): void {
+  const s = server as Server
+
+  // Resets/garbage on a socket before a request is parsed: drop it quietly.
+  s.on('clientError', (_err, socket) => {
+    socket.destroy()
+  })
+
+  process.on('uncaughtException', (err) => {
+    if (isClientDisconnectError(err)) {
+      const code = (err as NodeJS.ErrnoException).code ?? err.message
+      console.warn(
+        `client connection dropped mid-request (${code}); continuing`,
+      )
+      return
+    }
+    console.error(err)
+    process.exit(1)
+  })
+
+  process.on('unhandledRejection', (reason) => {
+    if (isClientDisconnectError(reason)) {
+      const code = (reason as NodeJS.ErrnoException).code ?? 'aborted'
+      console.warn(
+        `client connection dropped mid-request (${code}); continuing`,
+      )
+      return
+    }
+    console.error(reason)
+    process.exit(1)
+  })
+}

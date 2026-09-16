@@ -98,9 +98,8 @@ async function runInForeground(
   // Lazy-load so `--help` / `login` don't pay for the Hono/server bootstrap.
   const { serve } = await import('@hono/node-server')
   const { createApp } = await import('../../http/app')
-  const { tuneHttpServer, enableHappyEyeballs } = await import(
-    '../../http/tune-server'
-  )
+  const { tuneHttpServer, enableHappyEyeballs, installDisconnectGuards } =
+    await import('../../http/tune-server')
 
   enableHappyEyeballs()
 
@@ -115,6 +114,7 @@ async function runInForeground(
 
   const server = serve({ fetch: app.fetch, port }, async () => {
     tuneHttpServer(server)
+    installDisconnectGuards(server)
     let tunnel: TunnelHandle | null = null
     if (useTunnel) {
       tunnel = await tryStartTunnel(deps, port, useTunnel)

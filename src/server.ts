@@ -6,7 +6,11 @@ import { consoleLogger } from './adapters/process/console-logger'
 import { systemClock } from './adapters/process/system-clock'
 import { getCredentialStore } from './adapters/storage/create-credential-store'
 import { createApp } from './http/app'
-import { enableHappyEyeballs, tuneHttpServer } from './http/tune-server'
+import {
+  enableHappyEyeballs,
+  installDisconnectGuards,
+  tuneHttpServer,
+} from './http/tune-server'
 
 // Build a default production app. Kept as a module default export so
 // `api/index.ts` (Vercel) and `node dist/server.js` both keep working without
@@ -39,6 +43,7 @@ if (require.main === module) {
     },
   )
   tuneHttpServer(server)
+  installDisconnectGuards(server)
 
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
