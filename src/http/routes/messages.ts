@@ -9,6 +9,7 @@ import { FAST_MODE_BETA } from '../../domain/proxy/fast-mode'
 import { STATIC_FALLBACK_IDS, parseModelName } from '../../domain/proxy/model-name'
 import { extractAnthropicModels } from '../../domain/proxy/models'
 import {
+  type ReasoningFormat,
   createConverterState,
   flushPendingLine,
   processChunk,
@@ -164,6 +165,22 @@ function shouldFallBackFromFast(
   )
 }
 
+// The account can't use fast mode at all (e.g. a Claude subscription without
+// usage credits). Unlike a capacity 429 this won't clear in seconds, so skip
+// fast mode for a while instead of paying a failed round-trip per request.
+const FAST_ENTITLEMENT_BACKOFF_MS = 10 * 60 * 1_000
+
+function isFastEntitlementError(res: AnthropicFetchResponse): boolean {
+  if (res.status === 400 || res.status === 403) return true
+  return /credits are required|not available|not enabled|access/i.test(
+    res.errorText ?? '',
+  )
+}
+
+interface FastModeState {
+  disabledUntil: number
+}
+
 function withoutFastMode(opts: AnthropicFetchOptions): AnthropicFetchOptions {
   const { speed: _speed, ...body } = opts.body as AnthropicRequestBody
   return {
@@ -176,16 +193,25 @@ function withoutFastMode(opts: AnthropicFetchOptions): AnthropicFetchOptions {
 async function sendMessagesWithRetry(
   deps: MessagesDeps,
   initialOpts: AnthropicFetchOptions,
+  fastState: FastModeState,
 ): Promise<AnthropicFetchResponse> {
   let opts = initialOpts
   for (let attempt = 0; ; attempt++) {
     try {
       const res = await deps.anthropic.sendMessages(opts)
       if (shouldFallBackFromFast(opts, res)) {
-        deps.logger.warn('fast mode unavailable, falling back to standard speed', {
-          status: res.status,
-          text: res.errorText,
-        })
+        if (isFastEntitlementError(res)) {
+          fastState.disabledUntil = deps.clock.now() + FAST_ENTITLEMENT_BACKOFF_MS
+          deps.logger.warn(
+            'fast mode not available on this account; using standard speed for the next 10 minutes',
+            { status: res.status, text: res.errorText },
+          )
+        } else {
+          deps.logger.warn('fast mode unavailable, falling back to standard speed', {
+            status: res.status,
+            text: res.errorText,
+          })
+        }
         opts = withoutFastMode(opts)
         attempt--
         continue
@@ -351,8 +377,27 @@ async function resolveAccessToken(
 // Route
 // ---------------------------------------------------------------------------
 
+const REASONING_FORMATS: readonly ReasoningFormat[] = [
+  'reasoning_content',
+  'reasoning',
+  'think',
+  'quote',
+  'off',
+]
+
+// CURSOR_CLAUDE_REASONING selects how thinking is shown to OpenAI-style
+// clients (quote | reasoning_content | reasoning | think | off; default
+// quote); see ReasoningFormat.
+export function reasoningFormatFromEnv(
+  value = process.env.CURSOR_CLAUDE_REASONING,
+): ReasoningFormat {
+  const v = value?.trim().toLowerCase()
+  return REASONING_FORMATS.find((f) => f === v) ?? 'quote'
+}
+
 export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
   const tokenCache: TokenCache = { creds: null, refreshing: null }
+  const fastState: FastModeState = { disabledUntil: 0 }
 
   const handler = async (c: Context) => {
     const body = (await c.req.json()) as AnthropicRequestBody
@@ -398,14 +443,19 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
         })
       }
 
-      const upstream = await sendMessagesWithRetry(deps, {
+      let upstreamOpts: AnthropicFetchOptions = {
         body,
         accessToken: oauthToken,
         streaming: isStreaming,
         betas: fastMode.betas,
         // Propagate client disconnects so cancelled requests die upstream too.
         signal: c.req.raw.signal,
-      })
+      }
+      if (fastMode.fast && deps.clock.now() < fastState.disabledUntil) {
+        upstreamOpts = withoutFastMode(upstreamOpts)
+      }
+
+      const upstream = await sendMessagesWithRetry(deps, upstreamOpts, fastState)
 
       if (!upstream.ok) {
         deps.logger.error('upstream error', {
@@ -453,7 +503,9 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
         const decoder = new TextDecoder()
 
         return stream(c, async (writer) => {
-          const converterState = createConverterState()
+          const converterState = createConverterState({
+            reasoningFormat: reasoningFormatFromEnv(),
+          })
           writer.onAbort(() => {
             reader.cancel().catch(() => {})
           })
@@ -515,8 +567,15 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
               }
             }
           } catch (err) {
+            if (c.req.raw.signal.aborted) {
+              // The client cancelled (stop button, superseded request); the
+              // upstream read rejects with the abort reason. Not a failure.
+              deps.logger.info('client cancelled stream')
+              return
+            }
             deps.logger.error('stream error', {
-              message: (err as Error).message,
+              message:
+                err instanceof Error ? err.message : String(err ?? 'unknown'),
             })
             // Surface the failure to the client instead of silently closing
             // the connection — IDEs render a silent close as an endless
@@ -543,6 +602,15 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
             }
           } finally {
             clearInterval(heartbeat)
+            if (transformToOpenAIFormat) {
+              deps.logger.info('response summary', {
+                model: body.model,
+                thinking: (body.thinking as { display?: string } | undefined)?.display ?? 'default',
+                reasoningFormat: converterState.reasoningFormat,
+                stopReason: converterState.metricsData.stop_reason,
+                ...converterState.stats,
+              })
+            }
             // cancel() (not just releaseLock) so the upstream request is torn
             // down and stops consuming rate limit.
             reader.cancel().catch(() => {})
@@ -555,13 +623,24 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
       copyUpstreamHeaders(c, upstream.headers)
 
       if (transformToOpenAIFormat) {
-        return c.json(convertNonStreamingResponse(responseData))
+        return c.json(
+          convertNonStreamingResponse(responseData, reasoningFormatFromEnv()),
+        )
       }
       return c.json(responseData)
     } catch (err) {
-      deps.logger.error('proxy error', { message: (err as Error).message })
+      if (c.req.raw.signal.aborted) {
+        // Client cancelled before the upstream responded; nobody is
+        // listening for a reply. The fetch rejects with the abort reason,
+        // which is often not an Error.
+        deps.logger.info('client cancelled request')
+        return new Response(null, { status: 499 })
+      }
+      const message =
+        err instanceof Error ? err.message : String(err ?? 'unknown')
+      deps.logger.error('proxy error', { message })
       return c.json<ErrorResponse>(
-        { error: 'Proxy error', details: (err as Error).message },
+        { error: 'Proxy error', details: message },
         500,
       )
     }

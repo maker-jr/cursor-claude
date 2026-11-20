@@ -93,3 +93,49 @@ export function applyThinkingAndEffort(
     body.output_config = { ...existing, effort: parsed.effort }
   }
 }
+
+/**
+ * Models whose thinking `display` defaults to "omitted" — thinking blocks
+ * (including the progress notes the newest models write between tool calls)
+ * stream back with empty text unless `display` is set. Opus 4.6 / Sonnet 4.6
+ * already default to "summarized" and are left alone.
+ */
+export function defaultsToOmittedThinkingDisplay(canonicalId: string): boolean {
+  return (
+    /^claude-(opus|sonnet|haiku|fable|mythos)-5(-|$)/.test(canonicalId) ||
+    /^claude-opus-4-[78](-|$)/.test(canonicalId)
+  )
+}
+
+/** Claude 5 family: omitting `thinking` runs adaptive (thinking is on). */
+function thinkingOnByDefault(canonicalId: string): boolean {
+  return /^claude-(opus|sonnet|haiku|fable|mythos)-5(-|$)/.test(canonicalId)
+}
+
+/**
+ * Makes thinking visible to the client by requesting `display: "summarized"`:
+ * short reasoning summaries plus the between-tool-call progress notes, which
+ * the proxy streams to Cursor as `reasoning_content`. Without this, the
+ * newest models return those blocks empty and a long agent turn looks silent.
+ *
+ * Never turns thinking on for a model where it would otherwise be off, and
+ * leaves any client-chosen `display` untouched.
+ */
+export function applyThinkingDisplay(body: AnthropicRequestBody): void {
+  if (!defaultsToOmittedThinkingDisplay(body.model)) return
+  const thinking = body.thinking
+  if (thinking == null) {
+    if (thinkingOnByDefault(body.model)) {
+      body.thinking = { type: 'adaptive', display: 'summarized' }
+    }
+    return
+  }
+  if (
+    typeof thinking === 'object' &&
+    !Array.isArray(thinking) &&
+    (thinking as Record<string, unknown>).type === 'adaptive' &&
+    (thinking as Record<string, unknown>).display === undefined
+  ) {
+    body.thinking = { ...(thinking as Record<string, unknown>), display: 'summarized' }
+  }
+}

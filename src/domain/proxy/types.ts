@@ -12,10 +12,11 @@ export interface AnthropicRequestBody {
 }
 
 export interface AnthropicContentBlock {
-  type: 'text' | 'tool_use'
+  type: 'text' | 'tool_use' | 'thinking' | 'redacted_thinking'
   id?: string
   name?: string
   text?: string
+  thinking?: string
   input?: unknown
 }
 
@@ -46,6 +47,7 @@ export interface AnthropicStreamEvent {
   content_block?: AnthropicContentBlock
   delta?: {
     text?: string
+    thinking?: string
     partial_json?: string
     stop_reason?: string
   }
@@ -65,6 +67,10 @@ export interface OpenAIStreamChunk {
     delta: {
       role?: string
       content?: string
+      // DeepSeek-style reasoning field.
+      reasoning_content?: string
+      // OpenRouter-style reasoning field.
+      reasoning?: string
       tool_calls?: Array<{
         index: number
         id?: string
@@ -91,6 +97,7 @@ export interface OpenAIResponse {
     message: {
       role: string
       content: string | null
+      reasoning_content?: string
       tool_calls: Array<{
         id: string
         type: 'function'

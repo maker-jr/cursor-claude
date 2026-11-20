@@ -116,6 +116,17 @@ Supported effort levels: `low`, `medium`, `high`, `xhigh`, `max`.
 
 The proxy strips the suffix automatically, sets the matching Anthropic API parameters (`thinking`, `output_config.effort`), and forwards the canonical model id — no changes required on your end beyond picking the right name in Cursor.
 
+### Thinking and streamed edits
+
+On Claude 5 models (and Opus 4.7/4.8 with a `-thinking` suffix), the proxy asks for summarized thinking and shows it as a quote block at the top of each reply:
+
+> **Thinking**
+> Checking how the config is loaded before changing the default…
+
+This includes the short notes Opus 5.5, Sonnet 5.5 and Fable write between tool calls. Cursor can't show its native collapsible thought block for a custom endpoint: its servers ignore every reasoning field we tried and drop `<think>` tags. The quote is removed from earlier replies before they are sent back to Claude. Change the format with `CURSOR_CLAUDE_REASONING` (see below).
+
+Tool arguments (file edits) are streamed as they are written (`eager_input_streaming`), not delivered in one burst at the end.
+
 ### Fast mode
 
 Anthropic's fast mode runs the same model at up to ~2.5x output tokens/sec, at premium pricing ($8 / $40 per MTok on Opus 5.5; [details](https://platform.claude.com/docs/en/build-with-claude/fast-mode)). The proxy turns it on when any of these is present:
@@ -145,6 +156,7 @@ All optional. Set them in the shell, an `.env` file in your cwd, or both.
 - `ANTHROPIC_OAUTH_CLIENT_ID` — override the OAuth client id (defaults to the official Claude CLI id).
 - `REDIS_URL` — if set, credentials are stored in Redis instead of a local file. Useful for remote/shared deployments.
 - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` — Upstash REST alternative to `REDIS_URL`.
+- `CURSOR_CLAUDE_REASONING` — how the model's thinking is shown to OpenAI-style clients: `quote` (default; a **Thinking** quote block at the top of the reply), `reasoning_content` (DeepSeek-style field, for clients with a reasoning panel), `reasoning` (also adds OpenRouter-style `reasoning`), `think` (`<think>` tags), or `off`. Cursor ignores the reasoning fields and hides `<think>` tags on custom endpoints, so keep `quote` for Cursor.
 - `XDG_CONFIG_HOME` — if set, config and credentials live under `$XDG_CONFIG_HOME/cursor-claude/` instead of the default OS config path.
 
 `dotenv` loads a `.env` from your **current working directory** only (not from your home folder). A stray `REDIS_URL` there switches the credential store for every command run in that directory — see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).

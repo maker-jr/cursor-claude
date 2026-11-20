@@ -49,7 +49,9 @@ export function defaultMaxTokensForModel(model: string): number | null {
 
 export const OAUTH_SCOPES = 'org:create_api_key user:profile user:inference'
 
-export const ANTHROPIC_BETA_HEADER =
-  'oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14'
+// Tool-input streaming is requested per tool (`eager_input_streaming`, see
+// transform-request); the legacy fine-grained-tool-streaming beta must not be
+// sent alongside it.
+export const ANTHROPIC_BETA_HEADER = 'oauth-2025-04-20'
 export const ANTHROPIC_VERSION = '2023-06-01'
 export const USER_AGENT = '@anthropic-ai/sdk 1.2.12 node/22.13.1'

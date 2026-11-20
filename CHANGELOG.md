@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-11-20
+
+### Changed
+
+- **Claude in Cursor shows its thinking and streams edits more like Cursor's built-in Claude.**
+  - **Thoughts are visible, as a quote block.** On Claude 5 models (and Opus 4.7/4.8 with thinking on), the proxy requests `thinking.display: "summarized"` and shows the reasoning summaries, plus the short notes Opus 5.5, Sonnet 5.5 and Fable write between tool calls, as a Markdown quote headed **Thinking** at the top of the reply. Before, thinking was discarded and long agent turns looked silent. Cursor can't show a native collapsible thought block for a custom endpoint: we tested `reasoning_content`, `reasoning`, `thinking`, `reasoning_details` and `<think>` tags, and Cursor's servers map none of them (they drop `<think>` text entirely). The quote is stripped from earlier assistant messages before they are sent back, so old thoughts aren't replayed to the model.
+  - **New `CURSOR_CLAUDE_REASONING` setting** chooses how thinking reaches OpenAI-style clients: `quote` (default), `reasoning_content` (DeepSeek-style field, for clients with a reasoning UI), `reasoning` (that plus OpenRouter-style `reasoning`), `think` (`<think>` tags), or `off`.
+  - **Edits stream as they are written.** Streamed requests set `eager_input_streaming: true` on each custom tool, so file edits arrive in small pieces instead of after a long pause. Measured with Cursor: 14K-character edits arrived in 600+ pieces with no gap over ~270 ms. Whether Cursor then shows an edit progressively or applies it once complete is up to Cursor. The legacy `fine-grained-tool-streaming-2025-05-14` beta header is no longer sent.
+  - `reasoning_content` / `reasoning` keys echoed back on assistant messages are stripped before forwarding.
+- **Fast mode remembers when the account can't use it.** On a Claude subscription without usage credits, Anthropic answers fast requests with `429 "Usage credits are required for fast mode."`. The proxy now goes straight to standard speed for 10 minutes after that answer, instead of paying a failed round-trip on every request.
+- A `response summary` log line per streamed response shows the amount of thinking, text and tool-argument data sent to the client.
+
+### Fixed
+
+- A client cancelling a request (stop button, or a new message while one is in flight) is logged as `client cancelled request` / `client cancelled stream` instead of an empty `proxy error {}` / `stream error {}`.
+
+[1.6.0]: https://github.com/maker-jr/cursor-claude/releases/tag/v1.6.0
+
 ## [1.5.0] - 2026-11-20
 
 ### Added

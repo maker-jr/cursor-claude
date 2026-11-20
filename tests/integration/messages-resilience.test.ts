@@ -373,7 +373,7 @@ describe('model-id catalog resilience', () => {
     const sent = anthropic.sendCalls[0].body as Record<string, unknown>
     expect(sent.model).toBe('claude-opus-5')
     // budget_tokens and temperature are hard 400s on claude-opus-5.
-    expect(sent.thinking).toEqual({ type: 'adaptive' })
+    expect(sent.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
     expect(sent.output_config).toEqual({ effort: 'high' })
     expect(sent.temperature).toBeUndefined()
   })
@@ -450,6 +450,45 @@ describe('fast mode', () => {
     expect(anthropic.sendCalls[1].betas).toEqual([])
   })
 
+  it('remembers "usage credits required" and skips fast mode on later requests', async () => {
+    const credits: AnthropicFetchResponse = {
+      ok: false,
+      status: 429,
+      headers: {},
+      body: null,
+      errorText:
+        '{"type":"error","error":{"type":"rate_limit_error","message":"Usage credits are required for fast mode."}}',
+    }
+    const anthropic = scriptedClient({
+      fetchModels: failingModels,
+      responses: [credits, OK_JSON, OK_JSON],
+    })
+    const app = makeApp({ anthropic })
+    await app.fetch(chatRequest({ model: 'claude-opus-5-5-high-fast' }))
+    expect(anthropic.sendCalls).toHaveLength(2)
+
+    // Second request goes straight to standard speed: one call, no speed.
+    const res = await app.fetch(chatRequest({ model: 'claude-opus-5-5-high-fast' }))
+    expect(res.status).toBe(200)
+    expect(anthropic.sendCalls).toHaveLength(3)
+    expect((anthropic.sendCalls[2].body as Record<string, unknown>).speed).toBeUndefined()
+  })
+
+  it('does not remember a plain capacity 429', async () => {
+    const anthropic = scriptedClient({
+      fetchModels: failingModels,
+      responses: [
+        { ok: false, status: 429, headers: {}, body: null, errorText: 'rate_limit_error' },
+        OK_JSON,
+        OK_JSON,
+      ],
+    })
+    const app = makeApp({ anthropic })
+    await app.fetch(chatRequest({ model: 'claude-opus-5-5-fast' }))
+    await app.fetch(chatRequest({ model: 'claude-opus-5-5-fast' }))
+    expect((anthropic.sendCalls[2].body as Record<string, unknown>).speed).toBe('fast')
+  })
+
   it('falls back when the account is not entitled to fast mode', async () => {
     const anthropic = scriptedClient({
       fetchModels: failingModels,
@@ -470,5 +509,39 @@ describe('fast mode', () => {
     )
     expect(res.status).toBe(200)
     expect(anthropic.sendCalls).toHaveLength(2)
+  })
+})
+
+describe('client cancellation', () => {
+  it('treats a cancel before the upstream responds as a non-error', async () => {
+    const controller = new AbortController()
+    const errors: string[] = []
+    const anthropic: AnthropicClient = {
+      async sendMessages() {
+        controller.abort()
+        // fetch rejects with the abort reason, which need not be an Error.
+        throw undefined
+      },
+      async fetchModels() {
+        return { anthropic: { models: {} } }
+      },
+    }
+    const app = createApp({
+      anthropic,
+      oauth: fakeOAuthClient(),
+      credentialStore: inMemoryCredentialStore({ 'auth:anthropic': VALID_CREDS }),
+      clock: fixedClock(NOW),
+      logger: { info: () => {}, warn: () => {}, error: (m) => errors.push(m) },
+      getExpectedApiKey: () => 'test-key',
+    })
+    const req = new Request('http://localhost/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer test-key' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-5', messages: [{ role: 'user', content: 'hi' }] }),
+      signal: controller.signal,
+    })
+    const res = await app.fetch(req)
+    expect(res.status).toBe(499)
+    expect(errors).toEqual([])
   })
 })
