@@ -116,6 +116,16 @@ Supported effort levels: `low`, `medium`, `high`, `xhigh`, `max`.
 
 The proxy strips the suffix automatically, sets the matching Anthropic API parameters (`thinking`, `output_config.effort`), and forwards the canonical model id — no changes required on your end beyond picking the right name in Cursor.
 
+### Fast mode
+
+Anthropic's fast mode runs the same model at up to ~2.5x output tokens/sec, at premium pricing ($8 / $40 per MTok on Opus 5.5; [details](https://platform.claude.com/docs/en/build-with-claude/fast-mode)). The proxy turns it on when any of these is present:
+
+- **Cursor's Fast toggle.** Cursor adds `-fast` to the model name (e.g. `claude-opus-5-5-high-fast`). The proxy strips it and sends `speed: "fast"`. You can also type a `-fast` name yourself.
+- **`service_tier: "priority"`** (or `"fast"`), the OpenAI-style fast-mode field, from any OpenAI-compatible client.
+- **`speed: "fast"`** sent directly by a native Anthropic client.
+
+Supported models: `claude-opus-5-5`, `claude-fable-5-2`, `claude-mythos-5-2`, plus `claude-opus-5` (research preview, needs access) and `claude-opus-4-8` (deprecated, removed 2026-11-30). The proxy adds the `fast-mode-2026-02-01` beta header for those last two. On other models (Sonnet, Haiku, older Opus) the request runs at standard speed instead of failing. If fast capacity is rate limited (`429`/`529`) or your account isn't entitled to it, the proxy retries once at standard speed so the chat doesn't fail. Switching speed causes a prompt-cache miss.
+
 ## API key behavior
 
 The proxy always requires clients to send an API key. The CLI manages this for you:

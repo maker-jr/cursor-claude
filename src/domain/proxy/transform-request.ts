@@ -5,6 +5,7 @@ import {
   allowsSamplingParams,
   defaultMaxTokensForModel,
 } from './policies'
+import { applyFastMode, type FastModeResult } from './fast-mode'
 import type { AnthropicRequestBody } from './types'
 
 export function stripOpenAiOnlyFields(body: Record<string, unknown>): void {
@@ -16,6 +17,7 @@ export function stripOpenAiOnlyFields(body: Record<string, unknown>): void {
 export interface TransformRequestResult {
   body: AnthropicRequestBody
   transformToOpenAIFormat: boolean
+  fastMode: FastModeResult
 }
 
 // Normalize an incoming /v1/chat/completions or /v1/messages body into the
@@ -28,9 +30,14 @@ export interface TransformRequestResult {
 //   - Prepend the claude-code marker to body.system (required for OAuth scope).
 //   - Pin max_tokens to the per-model default if not already capped.
 //
+// Fast mode (`speed: "fast"`) is resolved for every caller, native included:
+// it is set when requested and supported, and dropped otherwise.
+//
 // This function mutates + returns the body. Pure in the sense that it doesn't
 // touch I/O or globals.
 export function transformRequest(body: AnthropicRequestBody): TransformRequestResult {
+  // Must read `service_tier` (Cursor's fast toggle) before it is stripped.
+  const fastMode = applyFastMode(body)
   stripOpenAiOnlyFields(body as unknown as Record<string, unknown>)
 
   // Applies to every caller (including native claude-code): these params are
@@ -45,7 +52,7 @@ export function transformRequest(body: AnthropicRequestBody): TransformRequestRe
     body.system?.[0]?.text?.includes(CLAUDE_CODE_SYSTEM_MARKER),
   )
   if (alreadyClaudeCode || !body.messages) {
-    return { body, transformToOpenAIFormat: false }
+    return { body, transformToOpenAIFormat: false, fastMode }
   }
 
   const systemMessages = body.messages.filter(
@@ -79,5 +86,5 @@ export function transformRequest(body: AnthropicRequestBody): TransformRequestRe
     body.metadata = {}
   }
 
-  return { body, transformToOpenAIFormat: true }
+  return { body, transformToOpenAIFormat: true, fastMode }
 }

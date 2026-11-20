@@ -25,6 +25,8 @@ export interface ParsedModelName {
   thinking: boolean
   /** Effort level token, if present. */
   effort: EffortLevel | null
+  /** True when the "fast" token was present (fast mode, `speed: "fast"`). */
+  fast: boolean
   /** Any remaining tokens that weren't recognized. */
   unknownSuffix: string[]
 }
@@ -38,6 +40,11 @@ const EFFORT_LEVELS = new Set<string>(['low', 'medium', 'high', 'xhigh', 'max'])
  * supersedes it when available.
  */
 export const STATIC_FALLBACK_IDS: readonly string[] = [
+  'claude-fable-5-2',
+  'claude-mythos-5-2',
+  'claude-opus-5-5',
+  'claude-sonnet-5-5',
+  'claude-haiku-5-5',
   'claude-fable-5-1',
   'claude-fable-5',
   'claude-opus-5',
@@ -121,6 +128,7 @@ export function normalizeWordOrder(input: string): string {
  * id. The remainder is tokenised on "-" and each token classified:
  *   - "thinking"         → sets thinking = true
  *   - effort level token → sets effort
+ *   - "fast"             → sets fast = true
  *   - anything else      → accumulated in unknownSuffix
  *
  * Returns `null` only when no canonical id matches (e.g. a non-Claude model).
@@ -155,11 +163,14 @@ export function parseModelName(
   const tokens = remainder.length > 0 ? remainder.split('-') : []
   let thinking = false
   let effort: EffortLevel | null = null
+  let fast = false
   const unknownSuffix: string[] = []
 
   for (const token of tokens) {
     if (token === 'thinking') {
       thinking = true
+    } else if (token === 'fast') {
+      fast = true
     } else if (EFFORT_LEVELS.has(token)) {
       effort = token as EffortLevel
     } else {
@@ -167,7 +178,7 @@ export function parseModelName(
     }
   }
 
-  return { canonicalId, thinking, effort, unknownSuffix }
+  return { canonicalId, thinking, effort, fast, unknownSuffix }
 }
 
 /**
@@ -176,7 +187,7 @@ export function parseModelName(
  * like "claude-opus-5-thinking-high" was forwarded verbatim on the day a new
  * model shipped and Anthropic 404'd it.
  *
- * Strips recognized metadata tokens ("thinking", effort levels) off the tail
+ * Strips recognized metadata tokens ("thinking", "fast", effort levels) off the tail
  * only — no real Anthropic model id ends in one of those. Stops at the first
  * unrecognized token; if nothing was stripped, returns null so the name is
  * passed through untouched.
@@ -186,10 +197,14 @@ function parseUncataloged(normalised: string): ParsedModelName | null {
   const tokens = normalised.split('-')
   let thinking = false
   let effort: EffortLevel | null = null
+  let fast = false
   while (tokens.length > 2) {
     const last = tokens[tokens.length - 1]
     if (last === 'thinking') {
       thinking = true
+      tokens.pop()
+    } else if (last === 'fast') {
+      fast = true
       tokens.pop()
     } else if (EFFORT_LEVELS.has(last)) {
       if (effort === null) effort = last as EffortLevel
@@ -198,6 +213,12 @@ function parseUncataloged(normalised: string): ParsedModelName | null {
       break
     }
   }
-  if (!thinking && effort === null) return null
-  return { canonicalId: tokens.join('-'), thinking, effort, unknownSuffix: [] }
+  if (!thinking && effort === null && !fast) return null
+  return {
+    canonicalId: tokens.join('-'),
+    thinking,
+    effort,
+    fast,
+    unknownSuffix: [],
+  }
 }

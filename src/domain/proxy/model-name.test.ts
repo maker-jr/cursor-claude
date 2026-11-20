@@ -16,7 +16,7 @@ const IDS = [
   'claude-sonnet-latest',
 ]
 
-function parse(input: string, ids = IDS): ParsedModelName | null {
+function parse(input: string, ids: readonly string[] = IDS): ParsedModelName | null {
   return parseModelName(input, ids)
 }
 
@@ -41,6 +41,7 @@ describe('parseModelName — exact match (no suffix)', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: false,
       effort: null,
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -50,6 +51,7 @@ describe('parseModelName — exact match (no suffix)', () => {
       canonicalId: 'claude-sonnet-latest',
       thinking: false,
       effort: null,
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -61,6 +63,7 @@ describe('parseModelName — thinking suffix only', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: true,
       effort: null,
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -81,6 +84,7 @@ describe('parseModelName — effort suffix only', () => {
         canonicalId: 'claude-sonnet-4-6',
         thinking: false,
         effort,
+        fast: false,
         unknownSuffix: [],
       })
     })
@@ -93,6 +97,7 @@ describe('parseModelName — thinking + effort', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: true,
       effort: 'xhigh',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -102,6 +107,7 @@ describe('parseModelName — thinking + effort', () => {
       canonicalId: 'claude-opus-4-7',
       thinking: true,
       effort: 'max',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -111,6 +117,7 @@ describe('parseModelName — thinking + effort', () => {
       canonicalId: 'claude-sonnet-4-5',
       thinking: true,
       effort: 'low',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -122,6 +129,7 @@ describe('parseModelName — unknown suffixes', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: false,
       effort: null,
+      fast: false,
       unknownSuffix: ['plain'],
     })
   })
@@ -131,6 +139,7 @@ describe('parseModelName — unknown suffixes', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: false,
       effort: null,
+      fast: false,
       unknownSuffix: ['foo', 'bar'],
     })
   })
@@ -140,6 +149,7 @@ describe('parseModelName — unknown suffixes', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: true,
       effort: 'xhigh',
+      fast: false,
       unknownSuffix: ['custom'],
     })
   })
@@ -152,6 +162,7 @@ describe('parseModelName — longest-prefix match', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: true,
       effort: null,
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -162,6 +173,7 @@ describe('parseModelName — longest-prefix match', () => {
       canonicalId: 'claude-sonnet-4',
       thinking: false,
       effort: 'medium',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -213,6 +225,7 @@ describe('parseModelName — dot version separators', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: false,
       effort: 'medium',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -222,6 +235,7 @@ describe('parseModelName — dot version separators', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: true,
       effort: 'xhigh',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -231,6 +245,7 @@ describe('parseModelName — dot version separators', () => {
       canonicalId: 'claude-opus-4-6',
       thinking: true,
       effort: null,
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -240,6 +255,7 @@ describe('parseModelName — dot version separators', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: false,
       effort: null,
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -249,6 +265,7 @@ describe('parseModelName — dot version separators', () => {
       canonicalId: 'claude-opus-4-7',
       thinking: true,
       effort: 'max',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -286,6 +303,7 @@ describe('parseModelName — inverted word order', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: false,
       effort: 'medium',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -295,6 +313,7 @@ describe('parseModelName — inverted word order', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: false,
       effort: 'medium',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -304,6 +323,7 @@ describe('parseModelName — inverted word order', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: true,
       effort: 'xhigh',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -313,6 +333,7 @@ describe('parseModelName — inverted word order', () => {
       canonicalId: 'claude-sonnet-4-6',
       thinking: false,
       effort: null,
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -322,6 +343,7 @@ describe('parseModelName — inverted word order', () => {
       canonicalId: 'claude-opus-4-7',
       thinking: true,
       effort: 'max',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -333,6 +355,7 @@ describe('parseModelName — uncataloged model fallback', () => {
       canonicalId: 'claude-opus-5',
       thinking: true,
       effort: 'high',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -342,6 +365,7 @@ describe('parseModelName — uncataloged model fallback', () => {
       canonicalId: 'claude-sonnet-6',
       thinking: true,
       effort: null,
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -351,6 +375,7 @@ describe('parseModelName — uncataloged model fallback', () => {
       canonicalId: 'claude-opus-5',
       thinking: false,
       effort: 'max',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -364,6 +389,7 @@ describe('parseModelName — uncataloged model fallback', () => {
       canonicalId: 'claude-opus-5-20260401',
       thinking: true,
       effort: null,
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -379,6 +405,7 @@ describe('STATIC_FALLBACK_IDS — Claude 5 family', () => {
       canonicalId: 'claude-opus-5',
       thinking: true,
       effort: 'high',
+      fast: false,
       unknownSuffix: [],
     })
   })
@@ -388,6 +415,37 @@ describe('STATIC_FALLBACK_IDS — Claude 5 family', () => {
       canonicalId: 'claude-fable-5-1',
       thinking: false,
       effort: null,
+      fast: false,
+      unknownSuffix: [],
+    })
+  })
+})
+
+describe('parseModelName — fast token', () => {
+  it('parses a fast suffix alongside thinking and effort', () => {
+    expect(
+      parse('claude-opus-5-5-thinking-high-fast', STATIC_FALLBACK_IDS),
+    ).toEqual({
+      canonicalId: 'claude-opus-5-5',
+      thinking: true,
+      effort: 'high',
+      fast: true,
+      unknownSuffix: [],
+    })
+  })
+
+  it('matches claude-opus-5-5 rather than claude-opus-5 + "5"', () => {
+    expect(parse('claude-opus-5.5-fast', STATIC_FALLBACK_IDS)?.canonicalId).toBe(
+      'claude-opus-5-5',
+    )
+  })
+
+  it('strips fast off an uncataloged claude id', () => {
+    expect(parse('claude-opus-9-fast', [])).toEqual({
+      canonicalId: 'claude-opus-9',
+      thinking: false,
+      effort: null,
+      fast: true,
       unknownSuffix: [],
     })
   })

@@ -5,6 +5,7 @@ import {
   isCursorKeyCheck,
 } from '../../domain/proxy/cursor-bypass'
 import { applyThinkingAndEffort } from '../../domain/proxy/extended-thinking'
+import { FAST_MODE_BETA } from '../../domain/proxy/fast-mode'
 import { STATIC_FALLBACK_IDS, parseModelName } from '../../domain/proxy/model-name'
 import { extractAnthropicModels } from '../../domain/proxy/models'
 import {
@@ -112,6 +113,8 @@ async function normalizeModelInBody(
   body.model = parsed.canonicalId
 
   applyThinkingAndEffort(body, parsed)
+  // Validated against the model (and dropped if unsupported) in transformRequest.
+  if (parsed.fast) body.speed = 'fast'
 
   if (parsed.unknownSuffix.length > 0) {
     logger.warn('unrecognized model suffix tokens stripped', {
@@ -145,13 +148,48 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// Fast mode has its own rate limit/capacity, and a subscription may not be
+// entitled to it at all. Rather than fail the chat, drop to standard speed —
+// same model, same output, just slower (and a prompt-cache miss).
+function shouldFallBackFromFast(
+  opts: AnthropicFetchOptions,
+  res: AnthropicFetchResponse,
+): boolean {
+  const body = opts.body as AnthropicRequestBody
+  if (res.ok || body?.speed !== 'fast') return false
+  if (res.status === 429 || res.status === 529) return true
+  return (
+    (res.status === 400 || res.status === 403) &&
+    /speed|fast/i.test(res.errorText ?? '')
+  )
+}
+
+function withoutFastMode(opts: AnthropicFetchOptions): AnthropicFetchOptions {
+  const { speed: _speed, ...body } = opts.body as AnthropicRequestBody
+  return {
+    ...opts,
+    body,
+    betas: opts.betas?.filter((b) => b !== FAST_MODE_BETA),
+  }
+}
+
 async function sendMessagesWithRetry(
   deps: MessagesDeps,
-  opts: AnthropicFetchOptions,
+  initialOpts: AnthropicFetchOptions,
 ): Promise<AnthropicFetchResponse> {
+  let opts = initialOpts
   for (let attempt = 0; ; attempt++) {
     try {
       const res = await deps.anthropic.sendMessages(opts)
+      if (shouldFallBackFromFast(opts, res)) {
+        deps.logger.warn('fast mode unavailable, falling back to standard speed', {
+          status: res.status,
+          text: res.errorText,
+        })
+        opts = withoutFastMode(opts)
+        attempt--
+        continue
+      }
       if (
         res.ok ||
         attempt >= RETRY_DELAYS_MS.length ||
@@ -325,6 +363,8 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
       path: c.req.path,
       model: body.model,
       streaming: isStreaming,
+      serviceTier: body.service_tier,
+      speed: body.speed,
     })
 
     const apiKeyErr = checkApiKey(c, deps.getExpectedApiKey())
@@ -351,12 +391,18 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesDeps): void {
         )
       }
 
-      const { transformToOpenAIFormat } = transformRequest(body)
+      const { transformToOpenAIFormat, fastMode } = transformRequest(body)
+      if (fastMode.downgraded) {
+        deps.logger.warn('fast mode requested but not supported by model; using standard speed', {
+          model: body.model,
+        })
+      }
 
       const upstream = await sendMessagesWithRetry(deps, {
         body,
         accessToken: oauthToken,
         streaming: isStreaming,
+        betas: fastMode.betas,
         // Propagate client disconnects so cancelled requests die upstream too.
         signal: c.req.raw.signal,
       })

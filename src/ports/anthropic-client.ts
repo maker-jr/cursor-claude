@@ -3,6 +3,8 @@ export interface AnthropicFetchOptions {
   accessToken: string
   streaming: boolean
   signal?: AbortSignal
+  // Extra anthropic-beta values for this request (appended to the defaults).
+  betas?: string[]
 }
 
 export interface AnthropicFetchResponse {

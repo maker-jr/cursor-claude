@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-11-20
+
+### Added
+
+- **Fast mode support.** Cursor's Fast toggle had no effect on Claude models through the proxy: Cursor adds `-fast` to the model name (e.g. `claude-opus-5-5-high-fast`), and the proxy stripped it as an unknown suffix without ever setting Anthropic's `speed: "fast"`. The proxy now maps a `-fast` model-name suffix, OpenAI's `service_tier: "priority"`/`"fast"`, and a native `speed: "fast"` to Anthropic fast mode on the models that support it (`claude-opus-5-5`, `claude-fable-5-2`, `claude-mythos-5-2`, and with the `fast-mode-2026-02-01` beta `claude-opus-5` / `claude-opus-4-8`). On other models it runs at standard speed instead of returning a 400. If fast mode is rate limited (`429`/`529`) or not available to the account, the request is retried once at standard speed.
+
+### Fixed
+
+- The static fallback model catalog now includes `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-2` and `claude-mythos-5-2`. Before, when models.dev was unavailable, `claude-opus-5-5-…` matched `claude-opus-5` by prefix and was sent to the wrong model.
+
+[1.5.0]: https://github.com/maker-jr/cursor-claude/releases/tag/v1.5.0
+
 ## [1.4.2] - 2026-09-16
 
 ### Fixed

@@ -76,7 +76,9 @@ export function createHttpAnthropicClient(): AnthropicClient {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
         authorization: `Bearer ${opts.accessToken}`,
-        'anthropic-beta': ANTHROPIC_BETA_HEADER,
+        'anthropic-beta': [ANTHROPIC_BETA_HEADER, ...(opts.betas ?? [])].join(
+          ',',
+        ),
         'anthropic-version': ANTHROPIC_VERSION,
         'user-agent': USER_AGENT,
         accept: opts.streaming ? 'text/event-stream' : 'application/json',

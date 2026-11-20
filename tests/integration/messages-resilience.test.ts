@@ -378,3 +378,97 @@ describe('model-id catalog resilience', () => {
     expect(sent.temperature).toBeUndefined()
   })
 })
+
+describe('fast mode', () => {
+  const failingModels = () => {
+    throw new Error('models.dev unreachable')
+  }
+
+  it("maps Cursor's fast toggle (service_tier=priority) to speed=fast", async () => {
+    const anthropic = scriptedClient({ fetchModels: failingModels })
+    const app = makeApp({ anthropic })
+    const res = await app.fetch(
+      chatRequest({ model: 'claude-opus-5-5', service_tier: 'priority' }),
+    )
+    expect(res.status).toBe(200)
+    const sent = anthropic.sendCalls[0].body as Record<string, unknown>
+    expect(sent.speed).toBe('fast')
+    expect(sent.service_tier).toBeUndefined()
+    expect(anthropic.sendCalls[0].betas).toEqual([])
+  })
+
+  it("handles Cursor's fast model name (claude-opus-5-5-high-fast)", async () => {
+    const anthropic = scriptedClient({ fetchModels: failingModels })
+    const app = makeApp({ anthropic })
+    const res = await app.fetch(chatRequest({ model: 'claude-opus-5-5-high-fast' }))
+    expect(res.status).toBe(200)
+    const call = anthropic.sendCalls[0]
+    const sent = call.body as Record<string, unknown>
+    expect(sent.model).toBe('claude-opus-5-5')
+    expect(sent.speed).toBe('fast')
+    expect(sent.output_config).toEqual({ effort: 'high' })
+    expect(call.betas).toEqual([])
+  })
+
+  it('honors a -fast model suffix and adds the beta for preview models', async () => {
+    const anthropic = scriptedClient({ fetchModels: failingModels })
+    const app = makeApp({ anthropic })
+    await app.fetch(chatRequest({ model: 'claude-opus-5-thinking-high-fast' }))
+    const call = anthropic.sendCalls[0]
+    const sent = call.body as Record<string, unknown>
+    expect(sent.model).toBe('claude-opus-5')
+    expect(sent.speed).toBe('fast')
+    expect(call.betas).toEqual(['fast-mode-2026-02-01'])
+  })
+
+  it('does not send speed to a model without fast mode', async () => {
+    const anthropic = scriptedClient({ fetchModels: failingModels })
+    const app = makeApp({ anthropic })
+    const res = await app.fetch(
+      chatRequest({ model: 'claude-sonnet-5-5', service_tier: 'priority' }),
+    )
+    expect(res.status).toBe(200)
+    expect((anthropic.sendCalls[0].body as Record<string, unknown>).speed).toBeUndefined()
+  })
+
+  it('falls back to standard speed when fast mode is rate limited', async () => {
+    const anthropic = scriptedClient({
+      fetchModels: failingModels,
+      responses: [
+        { ok: false, status: 429, headers: {}, body: null, errorText: 'rate_limit_error' },
+        OK_JSON,
+      ],
+    })
+    const app = makeApp({ anthropic })
+    const res = await app.fetch(
+      chatRequest({ model: 'claude-opus-5', service_tier: 'priority' }),
+    )
+    expect(res.status).toBe(200)
+    expect(anthropic.sendCalls).toHaveLength(2)
+    expect((anthropic.sendCalls[0].body as Record<string, unknown>).speed).toBe('fast')
+    expect((anthropic.sendCalls[1].body as Record<string, unknown>).speed).toBeUndefined()
+    expect(anthropic.sendCalls[1].betas).toEqual([])
+  })
+
+  it('falls back when the account is not entitled to fast mode', async () => {
+    const anthropic = scriptedClient({
+      fetchModels: failingModels,
+      responses: [
+        {
+          ok: false,
+          status: 400,
+          headers: {},
+          body: null,
+          errorText: '{"error":{"message":"speed: fast mode is not available"}}',
+        },
+        OK_JSON,
+      ],
+    })
+    const app = makeApp({ anthropic })
+    const res = await app.fetch(
+      chatRequest({ model: 'claude-opus-5-5', service_tier: 'priority' }),
+    )
+    expect(res.status).toBe(200)
+    expect(anthropic.sendCalls).toHaveLength(2)
+  })
+})
